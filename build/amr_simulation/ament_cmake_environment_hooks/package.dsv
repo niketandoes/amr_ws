@@ -1,0 +1,5 @@
+source;share/amr_simulation/local_setup.bash
+source;share/amr_simulation/local_setup.dsv
+source;share/amr_simulation/local_setup.fish
+source;share/amr_simulation/local_setup.sh
+source;share/amr_simulation/local_setup.zsh

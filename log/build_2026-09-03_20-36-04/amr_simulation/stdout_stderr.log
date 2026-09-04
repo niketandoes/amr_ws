@@ -1,0 +1,35 @@
+-- Found ament_cmake: 2.8.8 (/opt/ros/lyrical/share/ament_cmake/cmake)
+-- Override CMake install command with custom implementation using symlinks instead of copying resources
+-- Found rclcpp: 32.0.2 (/opt/ros/lyrical/share/rclcpp/cmake)
+-- Found rosidl_generator_c: 5.2.1 (/opt/ros/lyrical/share/rosidl_generator_c/cmake)
+-- Found rosidl_generator_cpp: 5.2.1 (/opt/ros/lyrical/share/rosidl_generator_cpp/cmake)
+-- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+-- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+-- Found rmw_implementation_cmake: 7.10.1 (/opt/ros/lyrical/share/rmw_implementation_cmake/cmake)
+-- Found rmw_fastrtps_cpp: 9.4.9 (/opt/ros/lyrical/share/rmw_fastrtps_cpp/cmake)
+-- Using RMW implementation 'rmw_fastrtps_cpp' as default
+-- Found rclpy: 10.0.10 (/opt/ros/lyrical/share/rclpy/cmake)
+-- Found ament_lint_auto: 0.20.6 (/opt/ros/lyrical/share/ament_lint_auto/cmake)
+-- Added test 'flake8' to check Python code syntax and style conventions
+-- Configured 'flake8' exclude dirs and/or files: 
+-- Added test 'lint_cmake' to check CMake code style
+-- Added test 'pep257' to check Python code against some of the docstring style conventions in PEP 257
+-- Added test 'xmllint' to check XML markup files
+-- Configuring done (0.9s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/prathmesh/amr_ws/build/amr_simulation
+-- Install configuration: ""
+-- Execute custom install script
+-- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/worlds/warehouse.sdf
+-- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/models/amr.xacro
+-- Symlinking: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/launch/nav2_bringup.launch.py
+-- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/launch/warehouse_world.launch.py
+-- Symlinking: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/config/nav2_params.yaml
+[31mCMake Error at ament_cmake_symlink_install/ament_cmake_symlink_install.cmake:105 (message):
+  ament_cmake_symlink_install_directory() can't find
+  '/home/prathmesh/amr_ws/src/amr_simulation/maps'
+Call Stack (most recent call first):
+  ament_cmake_symlink_install/ament_cmake_symlink_install.cmake:323 (ament_cmake_symlink_install_directory)
+  cmake_install.cmake:46 (include)
+
+[0m

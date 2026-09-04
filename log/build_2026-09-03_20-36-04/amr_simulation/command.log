@@ -1,0 +1,4 @@
+Invoking command in '/home/prathmesh/amr_ws/build/amr_simulation': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/lyrical /usr/bin/cmake --build /home/prathmesh/amr_ws/build/amr_simulation -- -j8 -l8
+Invoked command in '/home/prathmesh/amr_ws/build/amr_simulation' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/lyrical /usr/bin/cmake --build /home/prathmesh/amr_ws/build/amr_simulation -- -j8 -l8
+Invoking command in '/home/prathmesh/amr_ws/build/amr_simulation': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/lyrical /usr/bin/cmake --install /home/prathmesh/amr_ws/build/amr_simulation
+Invoked command in '/home/prathmesh/amr_ws/build/amr_simulation' returned '1': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/lyrical /usr/bin/cmake --install /home/prathmesh/amr_ws/build/amr_simulation

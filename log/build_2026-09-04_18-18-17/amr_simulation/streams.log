@@ -1,0 +1,55 @@
+[0.092s] Invoking command in '/home/prathmesh/amr_ws/build/amr_simulation': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/lyrical PATH=/home/prathmesh/.gemini/antigravity-ide/bin:${PATH} /usr/bin/cmake /home/prathmesh/amr_ws/src/amr_simulation -DCMAKE_INSTALL_PREFIX=/home/prathmesh/amr_ws/install/amr_simulation
+[0.196s] -- Found ament_cmake: 2.8.8 (/opt/ros/lyrical/share/ament_cmake/cmake)
+[1.413s] -- Override CMake install command with custom implementation using symlinks instead of copying resources
+[1.474s] -- Found rclcpp: 32.0.2 (/opt/ros/lyrical/share/rclcpp/cmake)
+[1.642s] -- Found rosidl_generator_c: 5.2.1 (/opt/ros/lyrical/share/rosidl_generator_c/cmake)
+[1.682s] -- Found rosidl_generator_cpp: 5.2.1 (/opt/ros/lyrical/share/rosidl_generator_cpp/cmake)
+[1.751s] -- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+[1.815s] -- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+[2.227s] -- Found rmw_implementation_cmake: 7.10.1 (/opt/ros/lyrical/share/rmw_implementation_cmake/cmake)
+[2.240s] -- Found rmw_fastrtps_cpp: 9.4.9 (/opt/ros/lyrical/share/rmw_fastrtps_cpp/cmake)
+[2.429s] -- Using RMW implementation 'rmw_fastrtps_cpp' as default
+[2.887s] -- Found rclpy: 10.0.10 (/opt/ros/lyrical/share/rclpy/cmake)
+[2.890s] -- Found ament_lint_auto: 0.20.6 (/opt/ros/lyrical/share/ament_lint_auto/cmake)
+[3.589s] -- Added test 'flake8' to check Python code syntax and style conventions
+[3.590s] -- Configured 'flake8' exclude dirs and/or files: 
+[3.594s] -- Added test 'lint_cmake' to check CMake code style
+[3.598s] -- Added test 'pep257' to check Python code against some of the docstring style conventions in PEP 257
+[3.605s] -- Added test 'xmllint' to check XML markup files
+[3.616s] -- Configuring done (3.5s)
+[3.663s] -- Generating done (0.0s)
+[3.820s] -- Build files have been written to: /home/prathmesh/amr_ws/build/amr_simulation
+[3.847s] Invoked command in '/home/prathmesh/amr_ws/build/amr_simulation' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/lyrical PATH=/home/prathmesh/.gemini/antigravity-ide/bin:${PATH} /usr/bin/cmake /home/prathmesh/amr_ws/src/amr_simulation -DCMAKE_INSTALL_PREFIX=/home/prathmesh/amr_ws/install/amr_simulation
+[3.854s] Invoking command in '/home/prathmesh/amr_ws/build/amr_simulation': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/lyrical PATH=/home/prathmesh/.gemini/antigravity-ide/bin:${PATH} /usr/bin/cmake --build /home/prathmesh/amr_ws/build/amr_simulation -- -j8 -l8
+[4.056s] Invoked command in '/home/prathmesh/amr_ws/build/amr_simulation' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/lyrical PATH=/home/prathmesh/.gemini/antigravity-ide/bin:${PATH} /usr/bin/cmake --build /home/prathmesh/amr_ws/build/amr_simulation -- -j8 -l8
+[4.127s] Invoking command in '/home/prathmesh/amr_ws/build/amr_simulation': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/lyrical PATH=/home/prathmesh/.gemini/antigravity-ide/bin:${PATH} /usr/bin/cmake --install /home/prathmesh/amr_ws/build/amr_simulation
+[4.186s] -- Install configuration: ""
+[4.188s] -- Execute custom install script
+[4.194s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/worlds/warehouse.sdf
+[4.199s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/models/amr.xacro
+[4.203s] -- Symlinking: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/launch/multi_robot_warehouse.launch.py
+[4.250s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/launch/nav2_bringup.launch.py
+[4.253s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/launch/warehouse_world.launch.py
+[4.255s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/config/nav2_params.yaml
+[4.256s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/config/navigate_to_pose.xml
+[4.256s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/maps/warehouse_map.pgm
+[4.257s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/maps/warehouse_map.yaml
+[4.257s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/lib/amr_simulation/generate_map.py
+[4.258s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/lib/amr_simulation/navigate_choke_point.py
+[4.258s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/ament_index/resource_index/package_run_dependencies/amr_simulation
+[4.259s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/ament_index/resource_index/parent_prefix_path/amr_simulation
+[4.261s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/environment/ament_prefix_path.sh
+[4.262s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/environment/ament_prefix_path.dsv
+[4.263s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/environment/path.sh
+[4.265s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/environment/path.dsv
+[4.266s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/local_setup.bash
+[4.267s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/local_setup.fish
+[4.268s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/local_setup.sh
+[4.269s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/local_setup.zsh
+[4.270s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/local_setup.dsv
+[4.271s] -- Symlinking: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/package.dsv
+[4.330s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/ament_index/resource_index/packages/amr_simulation
+[4.331s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/cmake/amr_simulationConfig.cmake
+[4.331s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/cmake/amr_simulationConfig-version.cmake
+[4.334s] -- Up-to-date symlink: /home/prathmesh/amr_ws/install/amr_simulation/share/amr_simulation/package.xml
+[4.336s] Invoked command in '/home/prathmesh/amr_ws/build/amr_simulation' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/lyrical PATH=/home/prathmesh/.gemini/antigravity-ide/bin:${PATH} /usr/bin/cmake --install /home/prathmesh/amr_ws/build/amr_simulation

@@ -1,0 +1,1 @@
+ament_cmake_symlink_install_files("/home/prathmesh/amr_ws/src/amr_simulation" FILES "/home/prathmesh/amr_ws/build/amr_simulation/ament_cmake_core/amr_simulationConfig.cmake" "/home/prathmesh/amr_ws/build/amr_simulation/ament_cmake_core/amr_simulationConfig-version.cmake" "DESTINATION" "share/amr_simulation/cmake")

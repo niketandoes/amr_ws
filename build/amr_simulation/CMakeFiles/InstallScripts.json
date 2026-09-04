@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/prathmesh/amr_ws/build/amr_simulation/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
