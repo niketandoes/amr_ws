@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<!--
+  AMR Fleet Command Live Dashboard UI
+  Displays:
+    - 2D Canvas Warehouse View with real-time AMR poses, headings, and trails
+    - Telemetry cards for AMR 1, AMR 2, AMR 3 (speed, battery SOC, state)
+    - Contract Net Protocol (CNP) live event log
+    - Operations control bar for opposing choke test and blockage injection
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Edge-AI AMR Fleet Command | Decentralized Telemetry</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="dashboard-wrapper">
+    <!-- Top Header -->
+    <header class="top-header">
+      <div class="brand-container">
+        <div class="brand-icon">
+          <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none">
+            <rect x="2" y="2" width="20" height="20" rx="5"></rect>
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+          </svg>
+        </div>
+        <div>
+          <h1 class="brand-title">AMR FLEET COMMAND <span>DECENTRALIZED P2P</span></h1>
+          <p class="brand-subtitle">ROS 2 Humble / Nav2 Edge-AI Mesh &bull; Contract Net Protocol &bull; Dynamic Choke Arbitration</p>
+        </div>
+      </div>
+
+      <div class="header-badges">
+        <div class="status-pill status-live">
+          <span class="pulse-dot"></span>
+          <span id="connStatus">TELEMETRY STREAM ACTIVE</span>
+        </div>
+        <div class="status-pill time-pill" id="liveClock">00:00:00 UTC</div>
+      </div>
+    </header>
+
+    <!-- Main Workspace Layout -->
+    <main class="main-layout">
+      <!-- Left Column: Interactive Map & Fleet Controls -->
+      <section class="viewport-column">
+        <!-- 2D Canvas Map Card -->
+        <div class="panel-card canvas-card">
+          <div class="panel-header">
+            <div class="title-with-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon>
+                <line x1="8" y1="2" x2="8" y2="18"></line>
+                <line x1="16" y1="6" x2="16" y2="22"></line>
+              </svg>
+              <h2>Warehouse Environment (Real-Time 2D View)</h2>
+            </div>
+            <div class="canvas-legend">
+              <span class="legend-item"><span class="color-box amr1"></span> AMR 1</span>
+              <span class="legend-item"><span class="color-box amr2"></span> AMR 2</span>
+              <span class="legend-item"><span class="color-box amr3"></span> AMR 3</span>
+              <span class="legend-item"><span class="color-box choke-zone"></span> 1.15m Choke Zone</span>
+            </div>
+          </div>
+          
+          <div class="canvas-container">
+            <canvas id="warehouseCanvas" width="920" height="520"></canvas>
+            <div class="map-overlay-stats">
+              <div>Scale: <span>45 px/meter</span></div>
+              <div>Arena: <span>12m &times; 8m</span></div>
+              <div>Bottleneck: <span>1.15m width</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Quick Dispatch Control Bar -->
+        <div class="panel-card controls-card">
+          <div class="panel-header">
+            <div class="title-with-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
+              </svg>
+              <h2>Fleet Operations &amp; Fault Injection</h2>
+            </div>
+          </div>
+          <div class="action-grid">
+            <button class="btn btn-primary" id="btnRunOpposing">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+              Dispatch Opposing Choke Test
+            </button>
+            <button class="btn btn-warning" id="btnTriggerBlockage">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"></rect><line x1="9" y1="9" x2="15" y2="15"></line><line x1="15" y1="9" x2="9" y2="15"></line></svg>
+              Simulate AMR 1 Blockage (Trigger CNP Auction)
+            </button>
+            <button class="btn btn-secondary" id="btnRecharge">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 12h-6M13 2v6M13 16v6M1 12h6"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              Reset Fleet Poses
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: Fleet Telemetry & CNP Activity Feed -->
+      <aside class="sidebar-column">
+        <!-- Robot Cards -->
+        <div class="robot-cards-container">
+          <!-- AMR 1 Card -->
+          <div class="robot-card" id="card-amr1">
+            <div class="robot-card-top">
+              <div class="robot-meta">
+                <span class="robot-badge amr1-badge">AMR 1</span>
+                <span class="robot-role">Priority Lead</span>
+              </div>
+              <span class="robot-state-tag" id="state-amr1">NORMAL_NAV</span>
+            </div>
+            <div class="robot-metrics-grid">
+              <div class="metric-item">
+                <label>POSITION</label>
+                <div class="metric-val" id="pos-amr1">-4.00, 0.00 m</div>
+              </div>
+              <div class="metric-item">
+                <label>VELOCITY</label>
+                <div class="metric-val" id="vel-amr1">0.00 m/s</div>
+              </div>
+              <div class="metric-item">
+                <label>HEADING</label>
+                <div class="metric-val" id="yaw-amr1">0.0&deg;</div>
+              </div>
+              <div class="metric-item">
+                <label>CHOKE DIST</label>
+                <div class="metric-val" id="dist-amr1">4.00 m</div>
+              </div>
+            </div>
+            <div class="battery-bar-container">
+              <div class="battery-label-row">
+                <span>BATTERY SOC</span>
+                <span id="batt-text-amr1">98.0% (25.1 V)</span>
+              </div>
+              <div class="battery-track">
+                <div class="battery-fill" id="batt-fill-amr1" style="width: 98%;"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- AMR 2 Card -->
+          <div class="robot-card" id="card-amr2">
+            <div class="robot-card-top">
+              <div class="robot-meta">
+                <span class="robot-badge amr2-badge">AMR 2</span>
+                <span class="robot-role">Counter Traversal</span>
+              </div>
+              <span class="robot-state-tag" id="state-amr2">NORMAL_NAV</span>
+            </div>
+            <div class="robot-metrics-grid">
+              <div class="metric-item">
+                <label>POSITION</label>
+                <div class="metric-val" id="pos-amr2">4.00, 0.00 m</div>
+              </div>
+              <div class="metric-item">
+                <label>VELOCITY</label>
+                <div class="metric-val" id="vel-amr2">0.00 m/s</div>
+              </div>
+              <div class="metric-item">
+                <label>HEADING</label>
+                <div class="metric-val" id="yaw-amr2">180.0&deg;</div>
+              </div>
+              <div class="metric-item">
+                <label>CHOKE DIST</label>
+                <div class="metric-val" id="dist-amr2">4.00 m</div>
+              </div>
+            </div>
+            <div class="battery-bar-container">
+              <div class="battery-label-row">
+                <span>BATTERY SOC</span>
+                <span id="batt-text-amr2">86.0% (24.6 V)</span>
+              </div>
+              <div class="battery-track">
+                <div class="battery-fill warning" id="batt-fill-amr2" style="width: 86%;"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- AMR 3 Card -->
+          <div class="robot-card" id="card-amr3">
+            <div class="robot-card-top">
+              <div class="robot-meta">
+                <span class="robot-badge amr3-badge">AMR 3</span>
+                <span class="robot-role">Cross-Traffic / Standby</span>
+              </div>
+              <span class="robot-state-tag" id="state-amr3">IDLE</span>
+            </div>
+            <div class="robot-metrics-grid">
+              <div class="metric-item">
+                <label>POSITION</label>
+                <div class="metric-val" id="pos-amr3">1.00, -4.00 m</div>
+              </div>
+              <div class="metric-item">
+                <label>VELOCITY</label>
+                <div class="metric-val" id="vel-amr3">0.00 m/s</div>
+              </div>
+              <div class="metric-item">
+                <label>HEADING</label>
+                <div class="metric-val" id="yaw-amr3">90.0&deg;</div>
+              </div>
+              <div class="metric-item">
+                <label>CHOKE DIST</label>
+                <div class="metric-val" id="dist-amr3">4.12 m</div>
+              </div>
+            </div>
+            <div class="battery-bar-container">
+              <div class="battery-label-row">
+                <span>BATTERY SOC</span>
+                <span id="batt-text-amr3">92.0% (24.9 V)</span>
+              </div>
+              <div class="battery-track">
+                <div class="battery-fill" id="batt-fill-amr3" style="width: 92%;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CNP Auction Activity Feed -->
+        <div class="panel-card feed-card">
+          <div class="panel-header">
+            <div class="title-with-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+              </svg>
+              <h2>Contract Net Protocol (CNP) Event Log</h2>
+            </div>
+            <button class="clear-btn" id="btnClearFeed">Clear</button>
+          </div>
+          <div class="feed-list" id="feedContainer">
+            <div class="feed-item event-info">
+              <span class="event-time">INIT</span>
+              <span class="event-msg">CNP Auction Protocol Listener active on <code>/fleet/task_auction</code></span>
+            </div>
+            <div class="feed-item event-success">
+              <span class="event-time">MESH</span>
+              <span class="event-msg">Decentralized P2P Discovery online: AMR 1, AMR 2, AMR 3 connected</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

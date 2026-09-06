@@ -1,1 +1,0 @@
-/home/prathmesh/amr_ws/src/amr_simulation/launch/multi_robot_warehouse.launch.py

@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """
-Uncoordinated Choke Point Baseline Benchmark Test
-Dispatches opposing navigation goals to AMR 1 and AMR 2 simultaneously into the
-1.15m choke point without P2P coordination. Serves as the experimental control condition
-demonstrating uncoordinated deadlock/abort behavior (Condition A).
+Coordinated Choke Point Navigation Test
+Dispatches opposing goals to AMR 1 and AMR 2 across the 1.15m narrow corridor
+while P2P intent sharing and decentralized coordination are active. Demonstrates
+deadlock-free traversal via spatial conflict arbitration.
+
+Target Goals:
+  - amr1: (3.5, -1.5)
+  - amr2: (-3.5, 1.5)
 """
 
 import rclpy
@@ -15,13 +19,14 @@ from rclpy.time import Time
 import sys
 import time
 
-class UncoordinatedChokeTest(Node):
+class CoordinatedChokeTest(Node):
     """
-    Control condition test harness issuing conflicting head-to-head navigation goals.
+    Action client node that issues simultaneous opposing navigation goals
+    to evaluate decentralized collision avoidance and right-of-way yielding.
     """
     def __init__(self):
         super().__init__(
-            'uncoordinated_choke_test',
+            'coordinated_choke_test',
             parameter_overrides=[
                 rclpy.parameter.Parameter('use_sim_time', rclpy.Parameter.Type.BOOL, True)
             ]
@@ -43,23 +48,22 @@ class UncoordinatedChokeTest(Node):
         goal1 = NavigateToPose.Goal()
         goal1.pose.header.frame_id = 'map'
         goal1.pose.header.stamp = Time().to_msg()
-        goal1.pose.pose.position.x = 4.0
-        goal1.pose.pose.position.y = 0.0
+        goal1.pose.pose.position.x = 3.5
+        goal1.pose.pose.position.y = -1.5
         goal1.pose.pose.orientation.w = 1.0
 
         goal2 = NavigateToPose.Goal()
         goal2.pose.header.frame_id = 'map'
         goal2.pose.header.stamp = Time().to_msg()
-        goal2.pose.pose.position.x = -4.0
-        goal2.pose.pose.position.y = 0.0
+        goal2.pose.pose.position.x = -3.5
+        goal2.pose.pose.position.y = 1.5
         goal2.pose.pose.orientation.z = 1.0
         goal2.pose.pose.orientation.w = 0.0
 
-        self.get_logger().info('[HEAD-TO-HEAD DISPATCH] Sending goal to AMR 1 (Target: x=4.0, y=0.0)...')
+        self.get_logger().info('[COORDINATED DISPATCH] Dispatching opposing goals with P2P intent sharing active...')
         f1 = self.amr1_client.send_goal_async(goal1)
         f1.add_done_callback(lambda future: self.goal_response_callback(future, 'amr1'))
 
-        self.get_logger().info('[HEAD-TO-HEAD DISPATCH] Sending goal to AMR 2 (Target: x=-4.0, y=0.0)...')
         f2 = self.amr2_client.send_goal_async(goal2)
         f2.add_done_callback(lambda future: self.goal_response_callback(future, 'amr2'))
 
@@ -68,24 +72,24 @@ class UncoordinatedChokeTest(Node):
         if not goal_handle.accepted:
             self.get_logger().warning(f'[{robot_id}] Goal REJECTED by Nav2 stack.')
             return
-        self.get_logger().info(f'[{robot_id}] Goal ACCEPTED by Nav2 stack. Monitoring execution...')
+        self.get_logger().info(f'[{robot_id}] Goal ACCEPTED. Monitoring P2P bottleneck traversal...')
         res_future = goal_handle.get_result_async()
         res_future.add_done_callback(lambda f: self.goal_result_callback(f, robot_id))
 
     def goal_result_callback(self, future, robot_id):
         status = future.result().status
         if status == GoalStatus.STATUS_SUCCEEDED:
-            self.get_logger().info(f'[{robot_id}] Mission SUCCEEDED! Cleared choke point.')
+            self.get_logger().info(f'[{robot_id}] Mission SUCCEEDED! Traversed choke point successfully.')
         elif status == GoalStatus.STATUS_CANCELED:
             self.get_logger().warning(f'[{robot_id}] Mission CANCELED.')
         elif status == GoalStatus.STATUS_ABORTED:
-            self.get_logger().error(f'[{robot_id}] Mission ABORTED! (Possible obstacle deadlock or stuck at choke point).')
+            self.get_logger().error(f'[{robot_id}] Mission ABORTED!')
         else:
-            self.get_logger().info(f'[{robot_id}] Mission completed with status code: {status}')
+            self.get_logger().info(f'[{robot_id}] Goal finished with status code: {status}')
 
 def main():
     rclpy.init()
-    node = UncoordinatedChokeTest()
+    node = CoordinatedChokeTest()
     if not node.wait_for_servers():
         sys.exit(1)
         

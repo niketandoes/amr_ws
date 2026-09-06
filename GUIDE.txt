@@ -1,13 +1,13 @@
-cd /home/prathmesh/amr_ws && colcon build --symlink-install && source install/setup.zsh
+cd /home/niket/amr_ws && colcon build --symlink-install && source install/setup.bash
 
 ros2 launch amr_simulation warehouse_world.launch.py
 
 killall -9 ruby gz gz-sim-main 2>/dev/null
 
-cd /home/prathmesh/amr_ws
-source install/setup.zsh
+cd /home/niket/amr_ws
+source install/setup.bash
 ros2 launch amr_simulation multi_robot_warehouse.launch.py
 
-cd /home/prathmesh/amr_ws
-source install/setup.zsh
+cd /home/niket/amr_ws
+source install/setup.bash
 python3 src/amr_simulation/scripts/uncoordinated_choke_test.py

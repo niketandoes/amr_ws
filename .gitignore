@@ -1,0 +1,55 @@
+# ==============================================================================
+# ROS 2 & Colcon Build Artifacts
+# ==============================================================================
+build/
+install/
+log/
+
+# ==============================================================================
+# Python Bytecode & Environments
+# ==============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+
+# ==============================================================================
+# Editors & OS Files
+# ==============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ==============================================================================
+# Temporary Execution & Debug Logs
+# ==============================================================================
+*.log
+troubleshooting_log.txt
+execution_log_*.txt
+frames_*.gv
+frames_*.pdf
+/tmp/nav2_params_*.yaml

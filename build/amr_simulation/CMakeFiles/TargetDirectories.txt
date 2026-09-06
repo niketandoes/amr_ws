@@ -1,9 +1,0 @@
-/home/prathmesh/amr_ws/build/amr_simulation/CMakeFiles/uninstall.dir
-/home/prathmesh/amr_ws/build/amr_simulation/CMakeFiles/amr_simulation_uninstall.dir
-/home/prathmesh/amr_ws/build/amr_simulation/CMakeFiles/test.dir
-/home/prathmesh/amr_ws/build/amr_simulation/CMakeFiles/edit_cache.dir
-/home/prathmesh/amr_ws/build/amr_simulation/CMakeFiles/rebuild_cache.dir
-/home/prathmesh/amr_ws/build/amr_simulation/CMakeFiles/list_install_components.dir
-/home/prathmesh/amr_ws/build/amr_simulation/CMakeFiles/install.dir
-/home/prathmesh/amr_ws/build/amr_simulation/CMakeFiles/install/local.dir
-/home/prathmesh/amr_ws/build/amr_simulation/CMakeFiles/install/strip.dir

@@ -1,3 +1,10 @@
+#!/usr/bin/env python3
+"""
+Warehouse 2D Occupancy Grid Map Generator
+Generates warehouse_map.pgm and warehouse_map.yaml based on warehouse SDF dimensions.
+Enforces 12m x 12m boundaries and central 1.15m narrow bottleneck.
+"""
+
 import os
 
 width = 240

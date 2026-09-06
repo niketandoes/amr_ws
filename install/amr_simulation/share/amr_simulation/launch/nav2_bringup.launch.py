@@ -1,1 +1,0 @@
-/home/prathmesh/amr_ws/src/amr_simulation/launch/nav2_bringup.launch.py

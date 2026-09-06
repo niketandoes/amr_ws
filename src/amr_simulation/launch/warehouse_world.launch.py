@@ -1,3 +1,9 @@
+"""
+Single-Robot Warehouse World Launch Script
+Spawns the warehouse SDF world and a single unnamespaced AMR baseline
+with sensor bridges and robot_state_publisher.
+"""
+
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription

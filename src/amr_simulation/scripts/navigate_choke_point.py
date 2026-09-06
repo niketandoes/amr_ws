@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""
+Single-Robot Choke Point Traversal Client
+Sends a programmatic NavigateToPose action goal across the central 1.15m choke point
+to verify single-robot unattended navigation and path following.
+"""
+
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
@@ -8,6 +14,9 @@ from geometry_msgs.msg import PoseStamped
 from action_msgs.msg import GoalStatus
 
 class ChokePointNavigator(Node):
+    """
+    Action client wrapper for dispatching and monitoring NavigateToPose goals.
+    """
     def __init__(self):
         super().__init__(
             'choke_point_navigator',
@@ -60,7 +69,7 @@ class ChokePointNavigator(Node):
         if status == GoalStatus.STATUS_SUCCEEDED:
             self.get_logger().info('Goal SUCCEEDED! AMR successfully cleared the bottleneck!')
         elif status == GoalStatus.STATUS_CANCELED:
-            self.get_logger().warn('Goal was CANCELED!')
+            self.get_logger().warning('Goal was CANCELED!')
         elif status == GoalStatus.STATUS_ABORTED:
             self.get_logger().error('Goal was ABORTED!')
         else:

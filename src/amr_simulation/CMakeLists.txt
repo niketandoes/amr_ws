@@ -9,6 +9,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclpy REQUIRED)
+find_package(amr_interfaces REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -23,12 +24,23 @@ if(BUILD_TESTING)
 endif()
 
 install(
-  DIRECTORY worlds models launch config maps
+  DIRECTORY worlds models launch config maps dashboard
   DESTINATION share/${PROJECT_NAME}
 )
 
 install(
-  PROGRAMS scripts/generate_map.py scripts/navigate_choke_point.py scripts/benchmark_logger.py scripts/uncoordinated_choke_test.py
+  PROGRAMS
+    scripts/generate_map.py
+    scripts/navigate_choke_point.py
+    scripts/benchmark_logger.py
+    scripts/uncoordinated_choke_test.py
+    scripts/intent_broadcaster.py
+    scripts/decentralized_coordinator.py
+    scripts/coordinated_choke_test.py
+    scripts/battery_simulator.py
+    scripts/task_allocator_cnp.py
+    scripts/fleet_dashboard_server.py
+    scripts/benchmark_runner.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

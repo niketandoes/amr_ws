@@ -1,4 +1,13 @@
 <?xml version="1.0" ?>
+<!--
+  Warehouse Simulation World (SDF 1.8)
+  Dimensions: 12m x 12m enclosed warehouse environment.
+  Features:
+    - Enclosing perimeter walls (North, South, East, West)
+    - Central bottleneck dividing wall with a 1.15m choke point gap at (x=0, y=0)
+    - High surface friction configuration to eliminate odometric wheel slip
+    - Gazebo Sim physics, scene broadcaster, and sensor systems
+-->
 <sdf version="1.8">
   <world name="warehouse_world">
     <physics name="1ms" type="ignored">

@@ -1,4 +1,14 @@
 <?xml version="1.0"?>
+<!--
+  AMR Description (Xacro)
+  Differential-drive mobile robot with parameterized prefix for multi-robot namespacing.
+  Features:
+    - Base footprint and chassis link (0.6m x 0.5m x 0.2m)
+    - Left and right differential drive wheels (0.1m radius)
+    - Front and rear passive caster wheels
+    - 2D LiDAR ray sensor plugin (360 deg FOV, 10m range, 10 Hz)
+    - Gazebo differential drive plugin publishing odometry and wheel transforms
+-->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="amr">
     <xacro:arg name="robot_name" default=""/>
     

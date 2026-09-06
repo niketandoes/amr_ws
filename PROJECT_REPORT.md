@@ -400,33 +400,33 @@ graph TD
 ## 5. Build, Execution & Verification Instructions
 
 ### 5.1 Building the Workspace
-```zsh
-cd /home/prathmesh/amr_ws
+```bash
+cd /home/niket/amr_ws
 colcon build --symlink-install
-source install/setup.zsh
+source install/setup.bash
 ```
 
 ### 5.2 Re-Generating the Map (Optional)
-```zsh
+```bash
 python3 src/amr_simulation/scripts/generate_map.py
 ```
 
 ### 5.3 Launching the Simulation & Navigation System
 In Terminal 1:
-```zsh
-source /home/prathmesh/amr_ws/install/setup.zsh
+```bash
+source /home/niket/amr_ws/install/setup.bash
 ros2 launch amr_simulation warehouse_world.launch.py
 ```
 
 ### 5.4 Dispatching the Autonomous Choke Point Mission
 In Terminal 2:
-```zsh
-source /home/prathmesh/amr_ws/install/setup.zsh
+```bash
+source /home/niket/amr_ws/install/setup.bash
 ros2 run amr_simulation navigate_choke_point.py
 ```
 *(Or directly via Python)*:
-```zsh
-python3 /home/prathmesh/amr_ws/src/amr_simulation/scripts/navigate_choke_point.py
+```bash
+python3 /home/niket/amr_ws/src/amr_simulation/scripts/navigate_choke_point.py
 ```
 
 ---
