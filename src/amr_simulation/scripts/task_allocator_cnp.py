@@ -15,6 +15,7 @@ from sensor_msgs.msg import BatteryState
 from std_msgs.msg import String, Bool
 from nav2_msgs.action import NavigateToPose
 from amr_interfaces.msg import TaskAuction, TaskBid, TaskAward
+from tf2_ros import Buffer, TransformListener, TransformException
 
 
 class TaskAllocatorCNP(Node):
@@ -32,6 +33,15 @@ class TaskAllocatorCNP(Node):
         self.active_goal_pose = None
         self.stalled_start_time = None
         self.is_blocked = False
+        self.low_battery_triggered = False
+
+        # Low battery threshold: below this %, reject bids and return to dock
+        self.LOW_BATTERY_THRESHOLD = 15.0
+
+        # TF2 listener for accurate global position (bid cost calculation)
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.tf_position = None  # (x, y) from map frame
 
         # Active auction state
         self.active_auction = None
@@ -95,10 +105,20 @@ class TaskAllocatorCNP(Node):
         # Nav2 Action Client
         self.nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
 
-        # Periodic check for stall/blockage
+        # Periodic check for stall/blockage and battery
         self.monitor_timer = self.create_timer(0.5, self.monitor_blockage)
+        self.battery_check_timer = self.create_timer(5.0, self._check_low_battery)
+        self.tf_update_timer = self.create_timer(0.2, self._update_tf_position)
 
         self.get_logger().info(f"TaskAllocatorCNP initialized for {self.robot_id}")
+
+    def _update_tf_position(self):
+        """Periodically update position from TF for accurate bid cost calculation."""
+        try:
+            trans = self.tf_buffer.lookup_transform('map', f'{self.robot_id}/base_footprint', rclpy.time.Time())
+            self.tf_position = (trans.transform.translation.x, trans.transform.translation.y)
+        except TransformException:
+            pass
 
     def odom_callback(self, msg: Odometry):
         self.current_pose = msg.pose.pose
@@ -182,13 +202,27 @@ class TaskAllocatorCNP(Node):
             self.get_logger().info(f"[{self.robot_id}] Ignoring auction {msg.task_id} (I am blocked)")
             return
 
-        if self.current_pose is None:
+        # Low battery guard: reject bids when battery is critically low
+        if self.current_battery_pct < self.LOW_BATTERY_THRESHOLD:
+            self.get_logger().warning(
+                f"[{self.robot_id}] Rejecting auction {msg.task_id} — battery critically low "
+                f"({self.current_battery_pct:.1f}% < {self.LOW_BATTERY_THRESHOLD}%)"
+            )
+            return
+
+        # Use TF-based position for accurate bid cost, fallback to odom
+        if self.tf_position is not None:
+            my_x, my_y = self.tf_position
+        elif self.current_pose is not None:
+            my_x = self.current_pose.position.x
+            my_y = self.current_pose.position.y
+        else:
             return
 
         # Calculate heuristic bid cost
         # Cost = (1.0 * Distance) + (0.5 * (100 - Battery))
-        dx = msg.target_pose.position.x - self.current_pose.position.x
-        dy = msg.target_pose.position.y - self.current_pose.position.y
+        dx = msg.target_pose.position.x - my_x
+        dy = msg.target_pose.position.y - my_y
         dist = math.hypot(dx, dy)
         battery_penalty = max(0.0, 100.0 - self.current_battery_pct)
 
@@ -268,6 +302,34 @@ class TaskAllocatorCNP(Node):
         standby_pose.pose.orientation.w = 1.0
 
         self.dispatch_nav2_goal(standby_pose)
+
+    def _check_low_battery(self):
+        """Periodic check: if battery drops below threshold, abort current task and return to dock."""
+        if self.current_battery_pct < self.LOW_BATTERY_THRESHOLD and not self.low_battery_triggered:
+            self.low_battery_triggered = True
+            self.get_logger().error(
+                f"[{self.robot_id}] ⚠️ CRITICAL LOW BATTERY ({self.current_battery_pct:.1f}%)! "
+                f"Aborting current task and returning to charging dock."
+            )
+            self.is_navigating = False
+            self.is_blocked = True  # Prevent accepting new tasks
+            
+            # Dispatch return-to-charger goal
+            charger_pose = PoseStamped()
+            charger_pose.header.frame_id = 'map'
+            charger_pose.header.stamp = self.get_clock().now().to_msg()
+            # Charging dock positions (near spawn points)
+            if self.robot_id == 'amr1':
+                charger_pose.pose.position.x = -4.0
+                charger_pose.pose.position.y = 0.0
+            elif self.robot_id == 'amr2':
+                charger_pose.pose.position.x = 4.0
+                charger_pose.pose.position.y = 0.0
+            else:
+                charger_pose.pose.position.x = 1.0
+                charger_pose.pose.position.y = -4.0
+            charger_pose.pose.orientation.w = 1.0
+            self.dispatch_nav2_goal(charger_pose)
 
     def award_callback(self, msg: TaskAward):
         """Processes task awards; winner executes the delivery goal."""

@@ -25,3 +25,7 @@ geometry_msgs/Pose[] planned_waypoints
 # 3 = YIELDING (holding outside bottleneck for higher-priority peer)
 # 4 = BLOCKED (stalled; initiates task handoff)
 uint8 current_state
+
+# Ground-truth bounding-box choke zone occupancy flag
+# True when robot's odometry (x,y) is inside the critical corridor reservation box
+bool is_in_choke_zone

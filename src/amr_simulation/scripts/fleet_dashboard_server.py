@@ -9,17 +9,35 @@ import sys
 import json
 import math
 import time
+import socket
 import threading
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse
 
+class ReusableThreadingHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+    def server_bind(self):
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if hasattr(socket, 'SO_REUSEPORT'):
+            try:
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            except OSError:
+                pass
+        super().server_bind()
+
+
 import rclpy
 from rclpy.node import Node
+from rclpy.action import ActionClient
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import BatteryState
 from std_msgs.msg import Bool
+from nav2_msgs.action import NavigateToPose
+from tf2_ros import Buffer, TransformListener, TransformException
 from ament_index_python.packages import get_package_share_directory
 
 try:
@@ -92,21 +110,36 @@ class FleetDashboardNode(Node):
         self.pub_amr3_goal = self.create_publisher(PoseStamped, '/amr3/goal_pose', 10)
         self.pub_blockage = self.create_publisher(Bool, '/amr1/trigger_blockage', 10)
 
+        # TF2 listener for accurate global positioning
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.tf_timer = self.create_timer(0.1, self.tf_timer_callback)
+
+        # Nav2 Action Clients for direct goal dispatch (no CNP dependency)
+        self.nav_clients = {}
+        for robot in ['amr1', 'amr2', 'amr3']:
+            self.nav_clients[robot] = ActionClient(self, NavigateToPose, f'/{robot}/navigate_to_pose')
+
         self.get_logger().info(f"FleetDashboardNode initialized. Dashboard files from: {self.static_dir}")
+
+    def tf_timer_callback(self):
+        with self.state_lock:
+            for robot_id in self.fleet_state.keys():
+                try:
+                    trans = self.tf_buffer.lookup_transform('map', f'{robot_id}/base_footprint', rclpy.time.Time())
+                    self.fleet_state[robot_id]['x'] = round(float(trans.transform.translation.x), 2)
+                    self.fleet_state[robot_id]['y'] = round(float(trans.transform.translation.y), 2)
+                    yaw = quaternion_to_yaw(trans.transform.rotation)
+                    self.fleet_state[robot_id]['yaw'] = round(float(yaw), 3)
+                except TransformException:
+                    pass
 
     def odom_callback(self, robot_id, msg: Odometry):
         with self.state_lock:
             if robot_id in self.fleet_state:
-                pos = msg.pose.pose.position
-                ori = msg.pose.pose.orientation
-                yaw = quaternion_to_yaw(ori)
                 vx = msg.twist.twist.linear.x
                 vy = msg.twist.twist.linear.y
                 speed = math.hypot(vx, vy)
-
-                self.fleet_state[robot_id]['x'] = round(float(pos.x), 2)
-                self.fleet_state[robot_id]['y'] = round(float(pos.y), 2)
-                self.fleet_state[robot_id]['yaw'] = round(float(yaw), 3)
                 self.fleet_state[robot_id]['speed'] = round(float(speed), 2)
 
     def battery_callback(self, robot_id, msg: BatteryState):
@@ -154,26 +187,44 @@ class FleetDashboardNode(Node):
             self.event_queue.append(event)
 
     def dispatch_opposing_test(self):
-        """Dispatches opposing goals across choke point."""
+        """Dispatches opposing goals across choke point via Nav2 action servers."""
         self.get_logger().info("Dispatching opposing choke goals to AMR1 and AMR2...")
-        # amr1 goal -> 3.5, -1.5
+        # amr1 goal -> 4.0, -1.5 (well clear of choke zone exit at x=1.5m)
         g1 = PoseStamped()
         g1.header.frame_id = 'map'
         g1.header.stamp = self.get_clock().now().to_msg()
-        g1.pose.position.x = 3.5
+        g1.pose.position.x = 4.0
         g1.pose.position.y = -1.5
         g1.pose.orientation.w = 1.0
-        self.pub_amr1_goal.publish(g1)
+        self._send_nav2_goal('amr1', g1)
 
-        # amr2 goal -> -3.5, 1.5
+        # amr2 goal -> -4.0, 1.5
         g2 = PoseStamped()
         g2.header.frame_id = 'map'
         g2.header.stamp = self.get_clock().now().to_msg()
-        g2.pose.position.x = -3.5
+        g2.pose.position.x = -4.0
         g2.pose.position.y = 1.5
         g2.pose.orientation.w = 0.0
         g2.pose.orientation.z = 1.0
-        self.pub_amr2_goal.publish(g2)
+        self._send_nav2_goal('amr2', g2)
+
+    def _send_nav2_goal(self, robot_id, pose_stamped):
+        """Send goal directly to Nav2 action server for a specific robot."""
+        client = self.nav_clients.get(robot_id)
+        if client is None:
+            self.get_logger().error(f"No Nav2 action client for {robot_id}")
+            return
+        if not client.server_is_ready():
+            self.get_logger().warning(f"Nav2 action server for {robot_id} not ready, falling back to topic")
+            # Fallback to topic-based dispatch
+            pub = getattr(self, f'pub_{robot_id}_goal', None)
+            if pub:
+                pub.publish(pose_stamped)
+            return
+        goal_msg = NavigateToPose.Goal()
+        goal_msg.pose = pose_stamped
+        client.send_goal_async(goal_msg)
+        self.get_logger().info(f"[{robot_id}] Nav2 goal dispatched via action server")
 
     def trigger_blockage_action(self):
         """Sends synthetic blockage trigger to AMR1."""
@@ -273,9 +324,20 @@ def main(args=None):
     # Launch HTTP Server in daemon thread
     def run_server():
         handler = lambda *hargs, **hkwargs: DashboardHTTPRequestHandler(*hargs, node=node, **hkwargs)
-        server = ThreadingHTTPServer(('0.0.0.0', 8080), handler)
+        server = None
+        for p in [8080, 8081, 8082]:
+            try:
+                server = ReusableThreadingHTTPServer(('0.0.0.0', p), handler)
+                break
+            except OSError:
+                continue
+        if server is None:
+            print("❌ Error: Could not bind HTTP Server to port 8080 or alternate ports.")
+            return
+
+        port = server.server_address[1]
         print("=" * 70)
-        print("  🚀 AMR FLEET DASHBOARD LIVE AT: http://localhost:8080")
+        print(f"  🚀 AMR FLEET DASHBOARD LIVE AT: http://localhost:{port}")
         print("=" * 70)
         server.serve_forever()
 

@@ -29,14 +29,17 @@ class UncoordinatedChokeTest(Node):
         self.amr1_client = ActionClient(self, NavigateToPose, '/amr1/navigate_to_pose')
         self.amr2_client = ActionClient(self, NavigateToPose, '/amr2/navigate_to_pose')
         
-    def wait_for_servers(self, timeout_sec=30.0):
+    def wait_for_servers(self, timeout_sec=60.0):
         self.get_logger().info('Waiting for /amr1 and /amr2 action servers...')
         s1 = self.amr1_client.wait_for_server(timeout_sec=timeout_sec)
         s2 = self.amr2_client.wait_for_server(timeout_sec=timeout_sec)
         if not s1 or not s2:
             self.get_logger().error('Action servers failed to become available within timeout.')
             return False
-        self.get_logger().info('Action servers are ONLINE and ready.')
+        self.get_logger().info('Action servers are ONLINE. Waiting 5s for Nav2 lifecycle activation...')
+        import time
+        time.sleep(5.0)
+        self.get_logger().info('Nav2 stack fully active. Ready.')
         return True
         
     def dispatch_head_to_head_goals(self):

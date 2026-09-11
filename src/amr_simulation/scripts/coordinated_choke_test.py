@@ -6,8 +6,8 @@ while P2P intent sharing and decentralized coordination are active. Demonstrates
 deadlock-free traversal via spatial conflict arbitration.
 
 Target Goals:
-  - amr1: (3.5, -1.5)
-  - amr2: (-3.5, 1.5)
+  - amr1: (4.0, -1.5)  [well clear of choke zone exit at x=1.5m]
+  - amr2: (-4.0, 1.5)   [well clear of choke zone exit at x=-1.5m]
 """
 
 import rclpy
@@ -34,28 +34,31 @@ class CoordinatedChokeTest(Node):
         self.amr1_client = ActionClient(self, NavigateToPose, '/amr1/navigate_to_pose')
         self.amr2_client = ActionClient(self, NavigateToPose, '/amr2/navigate_to_pose')
         
-    def wait_for_servers(self, timeout_sec=30.0):
+    def wait_for_servers(self, timeout_sec=60.0):
         self.get_logger().info('Waiting for /amr1 and /amr2 action servers...')
         s1 = self.amr1_client.wait_for_server(timeout_sec=timeout_sec)
         s2 = self.amr2_client.wait_for_server(timeout_sec=timeout_sec)
         if not s1 or not s2:
             self.get_logger().error('Action servers failed to become available within timeout.')
             return False
-        self.get_logger().info('Action servers are ONLINE and ready.')
+        self.get_logger().info('Action servers are ONLINE. Waiting 5s for Nav2 lifecycle activation...')
+        import time
+        time.sleep(5.0)
+        self.get_logger().info('Nav2 stack fully active. Ready.')
         return True
         
     def dispatch_head_to_head_goals(self):
         goal1 = NavigateToPose.Goal()
         goal1.pose.header.frame_id = 'map'
         goal1.pose.header.stamp = Time().to_msg()
-        goal1.pose.pose.position.x = 3.5
+        goal1.pose.pose.position.x = 4.0
         goal1.pose.pose.position.y = -1.5
         goal1.pose.pose.orientation.w = 1.0
 
         goal2 = NavigateToPose.Goal()
         goal2.pose.header.frame_id = 'map'
         goal2.pose.header.stamp = Time().to_msg()
-        goal2.pose.pose.position.x = -3.5
+        goal2.pose.pose.position.x = -4.0
         goal2.pose.pose.position.y = 1.5
         goal2.pose.pose.orientation.z = 1.0
         goal2.pose.pose.orientation.w = 0.0

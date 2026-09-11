@@ -16,6 +16,7 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Odometry
 from action_msgs.msg import GoalStatusArray, GoalStatus
+from tf2_ros import Buffer, TransformListener, TransformException
 import math
 import csv
 import os
@@ -41,35 +42,51 @@ class BenchmarkLogger(Node):
             'min_dist': float('inf')
         } for r in self.robots}
         
-        for r in self.robots:
-            self.create_subscription(Odometry, f'/{r}/odom', lambda msg, r=r: self.odom_callback(msg, r), 10)
-            self.create_subscription(GoalStatusArray, f'/{r}/navigate_to_pose/_action/status', lambda msg, r=r: self.status_callback(msg, r), 10)
-            
-        self.timer = self.create_timer(0.5, self.check_deadlock)
-        self.get_logger().info("Benchmark Logger Initialized and Monitoring Fleet /odom and Goal Statuses")
+        # TF2 listener for accurate global positioning
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.tf_timer = self.create_timer(0.1, self.tf_timer_callback)
 
-    def odom_callback(self, msg, robot_id):
+        for r in self.robots:
+            self.create_subscription(GoalStatusArray, f'/{r}/navigate_to_pose/_action/status', lambda msg, r=r: self.status_callback(msg, r), 10)
+
+        self.timer = self.create_timer(0.5, self.check_deadlock)
+        self.get_logger().info("Benchmark Logger Initialized and Monitoring TF and Goal Statuses")
+
+    def tf_timer_callback(self):
+        for r in self.robots:
+            try:
+                trans = self.tf_buffer.lookup_transform('map', f'{r}/base_footprint', rclpy.time.Time())
+                self.process_position(r, trans.transform.translation.x, trans.transform.translation.y)
+            except TransformException:
+                pass
+
+    def process_position(self, robot_id, new_x, new_y):
         s = self.state[robot_id]
-        new_x = msg.pose.pose.position.x
-        new_y = msg.pose.pose.position.y
-        new_v = math.hypot(msg.twist.twist.linear.x, msg.twist.twist.linear.y)
         
         if s['x'] is not None and s['active_goal']:
             dx = new_x - s['x']
             dy = new_y - s['y']
-            s['distance_traveled'] += math.hypot(dx, dy)
+            dist = math.hypot(dx, dy)
+            s['distance_traveled'] += dist
+            # Estimate velocity for deadlock detection
+            s['v'] = dist / 0.1 
             
         s['x'] = new_x
         s['y'] = new_y
-        s['v'] = new_v
         s['last_odom_time'] = self.get_clock().now()
         
-        # Calculate distance to other robots if both have valid odometry
+        # Calculate distance to other robots — only when both have active goals
+        # and valid (non-null) odometry to avoid false 0.00m readings
         for r2 in self.robots:
-            if r2 != robot_id and self.state[r2]['x'] is not None:
-                d = math.hypot(new_x - self.state[r2]['x'], new_y - self.state[r2]['y'])
-                if s['active_goal'] and d < s['min_dist']:
-                    s['min_dist'] = d
+            if r2 != robot_id:
+                s2 = self.state[r2]
+                if s2['x'] is not None and s['active_goal'] and s2['active_goal']:
+                    d = math.hypot(new_x - s2['x'], new_y - s2['y'])
+                    if d < s['min_dist']:
+                        s['min_dist'] = d
+                    if d < s2['min_dist']:
+                        s2['min_dist'] = d
 
     def status_callback(self, msg, robot_id):
         s = self.state[robot_id]

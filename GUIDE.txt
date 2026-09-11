@@ -1,13 +1,59 @@
-cd /home/niket/amr_ws && colcon build --symlink-install && source install/setup.bash
+===================================================================
+                  AMR WAREHOUSE SIMULATION GUIDE
+===================================================================
 
-ros2 launch amr_simulation warehouse_world.launch.py
+-------------------------------------------------------------------
+1. CLEANUP STALE PROCESSES (Run before starting fresh simulation)
+-------------------------------------------------------------------
+pkill -9 -f "gazebo|gzserver|gzclient|ros_gz_bridge|nav2|bt_navigator|component_container"
 
-killall -9 ruby gz gz-sim-main 2>/dev/null
+-------------------------------------------------------------------
+2. BUILD & SOURCE WORKSPACE
+-------------------------------------------------------------------
+cd /home/niket/amr_ws
+colcon build --symlink-install
+source install/setup.bash
 
+-------------------------------------------------------------------
+3. LAUNCH MULTI-ROBOT SIMULATION & NAV2 (Terminal 1)
+-------------------------------------------------------------------
 cd /home/niket/amr_ws
 source install/setup.bash
 ros2 launch amr_simulation multi_robot_warehouse.launch.py
 
+(Wait ~10-15s for Gazebo to render & Nav2 nodes to reach Active state)
+
+-------------------------------------------------------------------
+4. LAUNCH DECENTRALIZED CORRIDOR COORDINATOR (Terminal 2)
+-------------------------------------------------------------------
 cd /home/niket/amr_ws
 source install/setup.bash
-python3 src/amr_simulation/scripts/uncoordinated_choke_test.py
+ros2 run amr_simulation decentralized_coordinator.py
+
+-------------------------------------------------------------------
+5. LAUNCH FLEET DASHBOARD (Terminal 3)
+-------------------------------------------------------------------
+# Launch Backend & Web Server (Serves UI directly at http://localhost:8080):
+cd /home/niket/amr_ws
+source install/setup.bash
+ros2 run amr_simulation fleet_dashboard_server.py
+
+# Open your web browser and go to: http://localhost:8080
+
+-------------------------------------------------------------------
+6. RUN TESTS & MISSIONS (Terminal 4)
+-------------------------------------------------------------------
+# Coordinated Choke Point Test:
+cd /home/niket/amr_ws
+source install/setup.bash
+ros2 run amr_simulation coordinated_choke_test.py
+
+# Uncoordinated Choke Point Test:
+cd /home/niket/amr_ws
+source install/setup.bash
+ros2 run amr_simulation uncoordinated_choke_test.py
+
+# Contract Net Protocol Task Allocator:
+cd /home/niket/amr_ws
+source install/setup.bash
+ros2 run amr_simulation task_allocator_cnp.py

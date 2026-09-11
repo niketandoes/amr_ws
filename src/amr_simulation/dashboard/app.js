@@ -1,7 +1,9 @@
 /**
  * AMR Fleet Command Live Dashboard Client Application
  * Features:
- *   - 2D Canvas rendering of 12m x 8m warehouse arena, obstacles, and 1.15m bottleneck
+ *   - 2D Canvas rendering of 12m x 12m warehouse arena matching warehouse.sdf
+ *   - Accurate choke wall geometry (0.4m thick, 5.4m tall segments with 1.15m gap)
+ *   - Perimeter walls matching SDF (12m x 12m boundary at ±6m, 0.2m thick)
  *   - Real-time robot pose, heading angle, and trajectory breadcrumb visualization
  *   - Server-Sent Events (SSE) consumer streaming 10 Hz JSON telemetry from ROS 2
  *   - Telemetry card updates for AMR 1, AMR 2, and AMR 3 (speed, battery SOC, state)
@@ -12,13 +14,16 @@
   const canvas = document.getElementById('warehouseCanvas');
   const ctx = canvas.getContext('2d');
 
-  // Warehouse World Mapping Constants
-  // World space: x in [-6.0, 6.0], y in [-4.5, 4.5]
-  const WORLD_WIDTH = 12.0;  // meters
-  const WORLD_HEIGHT = 8.0;  // meters
+  // Warehouse World Mapping Constants — matches warehouse.sdf exactly
+  // World space: x in [-6.0, 6.0], y in [-6.0, 6.0]
+  const WORLD_WIDTH = 12.0;   // meters
+  const WORLD_HEIGHT = 12.0;  // meters (SDF is 12m x 12m, not 12m x 8m)
   const PADDING = 40;
 
-  let scale = (canvas.width - PADDING * 2) / WORLD_WIDTH;
+  let scale = Math.min(
+    (canvas.width - PADDING * 2) / WORLD_WIDTH,
+    (canvas.height - PADDING * 2) / WORLD_HEIGHT
+  );
   const originX = canvas.width / 2;
   const originY = canvas.height / 2;
 
@@ -28,6 +33,24 @@
       x: originX + (wx * scale),
       y: originY - (wy * scale)
     };
+  }
+
+  // Draw a world-space rectangle (center x, center y, width, height)
+  function drawWorldRect(cx, cy, w, h, fillStyle, strokeStyle, lineWidth) {
+    const pTopLeft = worldToCanvas(cx - w / 2, cy + h / 2);
+    const pBottomRight = worldToCanvas(cx + w / 2, cy - h / 2);
+    const rw = pBottomRight.x - pTopLeft.x;
+    const rh = pBottomRight.y - pTopLeft.y;
+
+    if (fillStyle) {
+      ctx.fillStyle = fillStyle;
+      ctx.fillRect(pTopLeft.x, pTopLeft.y, rw, rh);
+    }
+    if (strokeStyle) {
+      ctx.strokeStyle = strokeStyle;
+      ctx.lineWidth = lineWidth || 1;
+      ctx.strokeRect(pTopLeft.x, pTopLeft.y, rw, rh);
+    }
   }
 
   // Fleet State
@@ -43,33 +66,20 @@
     amr3: '#10b981'
   };
 
-  // Static Warehouse Obstacles (Warehouse Racks & Bottleneck)
-  const racks = [
-    // Top Racks
-    { x: -3.5, y: 2.2, w: 2.5, h: 0.8 },
-    { x: 3.5, y: 2.2, w: 2.5, h: 0.8 },
-    // Bottom Racks
-    { x: -3.5, y: -2.2, w: 2.5, h: 0.8 },
-    { x: 3.5, y: -2.2, w: 2.5, h: 0.8 },
-    // Choke Point Enclosure Walls (forming the 1.15m narrow channel at x in [-1.0, 1.0])
-    { x: 0.0, y: 2.0, w: 2.2, h: 1.8 },   // North constriction wall
-    { x: 0.0, y: -2.0, w: 2.2, h: 1.8 }   // South constriction wall
-  ];
-
   function drawGrid() {
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
     ctx.lineWidth = 1;
 
     for (let x = -6; x <= 6; x += 1) {
-      const p1 = worldToCanvas(x, -4);
-      const p2 = worldToCanvas(x, 4);
+      const p1 = worldToCanvas(x, -6);
+      const p2 = worldToCanvas(x, 6);
       ctx.beginPath();
       ctx.moveTo(p1.x, p1.y);
       ctx.lineTo(p2.x, p2.y);
       ctx.stroke();
     }
 
-    for (let y = -4; y <= 4; y += 1) {
+    for (let y = -6; y <= 6; y += 1) {
       const p1 = worldToCanvas(-6, y);
       const p2 = worldToCanvas(6, y);
       ctx.beginPath();
@@ -89,54 +99,77 @@
     ctx.stroke();
   }
 
-  function drawChokeZone() {
-    // Bottleneck boundary zone: x in [-1.5, 1.5], y in [-0.6, 0.6]
-    const pTopLeft = worldToCanvas(-1.5, 0.6);
-    const pBottomRight = worldToCanvas(1.5, -0.6);
+  function drawPerimeterWalls() {
+    // Matches warehouse.sdf perimeter walls exactly:
+    // wall_north:  pose (0, 6, 1),  size 12 x 0.2 x 2
+    // wall_south:  pose (0, -6, 1), size 12 x 0.2 x 2
+    // wall_west:   pose (-6, 0, 1), size 0.2 x 12 x 2
+    // wall_east:   pose (6, 0, 1),  size 0.2 x 12 x 2
+    const wallColor = '#475569';
+    const wallStroke = 'rgba(255, 255, 255, 0.15)';
+
+    drawWorldRect(0, 6, 12, 0.2, wallColor, wallStroke, 1);   // North
+    drawWorldRect(0, -6, 12, 0.2, wallColor, wallStroke, 1);  // South
+    drawWorldRect(-6, 0, 0.2, 12, wallColor, wallStroke, 1);  // West
+    drawWorldRect(6, 0, 0.2, 12, wallColor, wallStroke, 1);   // East
+  }
+
+  function drawChokeWalls() {
+    // Matches warehouse.sdf choke walls exactly:
+    // choke_wall_top:    pose (0, 3.36, 1),  size 0.4 x 5.4 x 2  -> y spans [0.66, 6.06]
+    // choke_wall_bottom: pose (0, -3.36, 1), size 0.4 x 5.4 x 2  -> y spans [-6.06, -0.66]
+    // Gap between them: y in [-0.66, 0.66] = 1.32m (effective 1.15m passable with robot width)
+    const chokeColor = '#7f1d1d';
+    const chokeStroke = 'rgba(239, 68, 68, 0.5)';
+
+    drawWorldRect(0, 3.36, 0.4, 5.4, chokeColor, chokeStroke, 1.5);   // Top segment
+    drawWorldRect(0, -3.36, 0.4, 5.4, chokeColor, chokeStroke, 1.5);  // Bottom segment
+
+    // Label the gap
+    const gapCenter = worldToCanvas(0, 0);
+    ctx.fillStyle = 'rgba(239, 68, 68, 0.7)';
+    ctx.font = '10px JetBrains Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText('1.15m GAP', gapCenter.x, gapCenter.y - 28);
+
+    // Draw small gap dimension markers
+    const gapTop = worldToCanvas(0, 0.66);
+    const gapBot = worldToCanvas(0, -0.66);
+    ctx.strokeStyle = 'rgba(239, 68, 68, 0.3)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(gapTop.x - 15, gapTop.y);
+    ctx.lineTo(gapTop.x + 15, gapTop.y);
+    ctx.moveTo(gapBot.x - 15, gapBot.y);
+    ctx.lineTo(gapBot.x + 15, gapBot.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function drawChokeReservationZone() {
+    // Reservation bounding box used by decentralized_coordinator.py:
+    // x in [-1.5, 1.5], y in [-1.2, 1.2]
+    const pTopLeft = worldToCanvas(-1.5, 1.2);
+    const pBottomRight = worldToCanvas(1.5, -1.2);
     const w = pBottomRight.x - pTopLeft.x;
     const h = pBottomRight.y - pTopLeft.y;
 
-    ctx.fillStyle = 'rgba(239, 68, 68, 0.08)';
+    ctx.fillStyle = 'rgba(239, 68, 68, 0.06)';
     ctx.fillRect(pTopLeft.x, pTopLeft.y, w, h);
 
-    ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)';
+    ctx.strokeStyle = 'rgba(239, 68, 68, 0.35)';
     ctx.lineWidth = 1.5;
     ctx.setLineDash([5, 4]);
     ctx.strokeRect(pTopLeft.x, pTopLeft.y, w, h);
     ctx.setLineDash([]);
 
     // Label
-    ctx.fillStyle = 'rgba(239, 68, 68, 0.7)';
-    ctx.font = '10px JetBrains Mono';
+    ctx.fillStyle = 'rgba(239, 68, 68, 0.5)';
+    ctx.font = '9px JetBrains Mono';
     ctx.textAlign = 'center';
-    ctx.fillText('1.15m CHOKE POINT', originX, originY - 14);
-  }
-
-  function drawObstacles() {
-    racks.forEach(r => {
-      const pTopLeft = worldToCanvas(r.x - r.w / 2, r.y + r.h / 2);
-      const pBottomRight = worldToCanvas(r.x + r.w / 2, r.y - r.h / 2);
-      const w = pBottomRight.x - pTopLeft.x;
-      const h = pBottomRight.y - pTopLeft.y;
-
-      // Obstacle body
-      ctx.fillStyle = '#1e293b';
-      ctx.fillRect(pTopLeft.x, pTopLeft.y, w, h);
-
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(pTopLeft.x, pTopLeft.y, w, h);
-
-      // Hatching effect
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
-      ctx.lineWidth = 1;
-      for (let offset = 0; offset < w + h; offset += 12) {
-        ctx.beginPath();
-        ctx.moveTo(pTopLeft.x + offset, pTopLeft.y);
-        ctx.lineTo(pTopLeft.x + offset - h, pTopLeft.y + h);
-        ctx.stroke();
-      }
-    });
+    const labelPos = worldToCanvas(0, -1.2);
+    ctx.fillText('RESERVATION ZONE', labelPos.x, labelPos.y + 12);
   }
 
   function drawRobot(name, r) {
@@ -205,8 +238,9 @@
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     drawGrid();
-    drawChokeZone();
-    drawObstacles();
+    drawPerimeterWalls();
+    drawChokeWalls();
+    drawChokeReservationZone();
 
     ['amr1', 'amr2', 'amr3'].forEach(name => {
       drawRobot(name, fleet[name]);

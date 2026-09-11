@@ -11,6 +11,7 @@ from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('amr_simulation')
@@ -18,7 +19,7 @@ def generate_launch_description():
     xacro_file = os.path.join(pkg_share, 'models', 'amr.xacro')
 
     # Process xacro
-    robot_description_config = Command(['xacro ', xacro_file])
+    robot_description_config = ParameterValue(Command(['xacro ', xacro_file]), value_type=str)
     robot_description = {'robot_description': robot_description_config}
 
     # Launch Gazebo with our warehouse world
