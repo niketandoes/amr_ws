@@ -4,33 +4,55 @@ This workspace contains a multi-robot simulation using ROS 2, Gazebo, and Nav2. 
 
 ## 🚀 Quick Start: How to Run the Simulation
 
-The entire simulation (Gazebo, Nav2 for all robots, Coordinators, and the Web Dashboard) is now bundled into a single launch file.
+The simulation components have been modularized so you can run them individually for easier debugging and isolated logs, or all at once.
 
-**Terminal 1 (Main Simulation):**
+### Option A: Launch Everything Together
+**Terminal 1:**
 ```bash
-# 1. Navigate to the workspace and build (if you haven't already)
 cd ~/amr_ws
 colcon build
-
-# 2. Source the ROS 2 workspace
 source install/setup.bash
-
-# 3. Launch the simulation
 ros2 launch amr_simulation multi_robot_warehouse.launch.py
 ```
+
+### Option B: Modular Launch (Recommended for Debugging)
+Open separate terminals for each component so logs don't get mixed up.
+
+**Terminal 1 (Gazebo):**
+```bash
+source ~/amr_ws/install/setup.bash
+ros2 launch amr_simulation gazebo_environment.launch.py
+```
+
+**Terminal 2 (Robot 1):**
+```bash
+source ~/amr_ws/install/setup.bash
+ros2 launch amr_simulation single_amr.launch.py namespace:=amr1 initial_pose_x:=-4.0 initial_pose_y:=0.0 initial_pose_yaw:=0.0
+```
+
+**Terminal 3 (Dashboard):**
+```bash
+source ~/amr_ws/install/setup.bash
+ros2 launch amr_simulation fleet_dashboard.launch.py
+```
+
 *Wait ~10-15 seconds for Gazebo to render and the Nav2 nodes to become fully active.*
 
 **View the Dashboard:**
-Once the simulation is running, open your web browser and go to: **[http://localhost:8080](http://localhost:8080)**
+Once running, open your web browser and go to: **[http://localhost:8080](http://localhost:8080)**
 
 **Terminal 2 (Run a Test Mission):**
 To make the robots actually do something, you run a test script in a new terminal.
+
 ```bash
 cd ~/amr_ws
 source install/setup.bash
 
-# Run the coordinated choke point test (robots navigate safely)
+# Option A: If you launched MULTIPLE robots (e.g. Option A above)
 ros2 run amr_simulation coordinated_choke_test.py
+
+# Option B: If you launched a SINGLE robot (e.g. Option B above)
+ros2 run amr_simulation navigate_choke_point.py
 ```
 
 > [!TIP]
@@ -49,9 +71,12 @@ These files orchestrate starting multiple ROS 2 nodes at once.
 
 | File | Purpose |
 |---|---|
-| **`multi_robot_warehouse.launch.py`** | **The Main Entrypoint.** This launches *everything*: Gazebo, the AMRs, Nav2 for each robot, the twist_mux velocity arbiters, the decentralized coordinators, the intent broadcasters, battery simulators, the task allocator, and the fleet dashboard web server. |
-| **`nav2_bringup.launch.py`** | Brings up the Nav2 navigation stack (map server, controller, planner, behavior server) for a *single* AMR namespace. This is called dynamically by the `multi_robot_warehouse.launch.py` script. |
-| **`warehouse_world.launch.py`** | A simpler launch file that only starts the Gazebo world. (Usually, you don't need to run this directly since the multi-robot launch includes it). |
+| **`multi_robot_warehouse.launch.py`** | **The Main Entrypoint.** Includes all the modular launch files below to launch everything at once. You can toggle specific robots off using arguments (e.g., `launch_amr2:=false`). |
+| **`gazebo_environment.launch.py`** | Launches only the Gazebo simulation world (`warehouse.sdf`) and the global clock bridge. Run this first when debugging! |
+| **`single_amr.launch.py`** | Brings up everything for a *single* robot namespace, including Nav2, the state publisher, Gazebo spawner, intent broadcaster, and coordinator. Pass `namespace`, `initial_pose_x`, `initial_pose_y`, and `initial_pose_yaw`. |
+| **`fleet_dashboard.launch.py`** | A simple launch file that starts only the web dashboard server. |
+| **`nav2_bringup.launch.py`** | Brings up the Nav2 navigation stack (map server, controller, planner, behavior server) for a single namespace. Called dynamically by `single_amr.launch.py`. |
+| **`warehouse_world.launch.py`** | A simpler launch file that only starts the Gazebo world. |
 
 ### Scripts (`src/amr_simulation/scripts/`)
 

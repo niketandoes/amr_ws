@@ -59,11 +59,9 @@
               </svg>
               <h2>Warehouse Environment (Real-Time 2D View)</h2>
             </div>
-            <div class="canvas-legend">
-              <span class="legend-item"><span class="color-box amr1"></span> AMR 1</span>
-              <span class="legend-item"><span class="color-box amr2"></span> AMR 2</span>
-              <span class="legend-item"><span class="color-box amr3"></span> AMR 3</span>
-              <span class="legend-item"><span class="color-box choke-zone"></span> 1.15m Choke Zone</span>
+            <div class="canvas-legend" id="canvasLegend">
+              <!-- Dynamically populated if needed, or just leave choke zone -->
+              <span class="legend-item"><span class="color-box choke-zone"></span> Occupancy Map</span>
             </div>
           </div>
           
@@ -107,120 +105,8 @@
       <!-- Right Column: Fleet Telemetry & CNP Activity Feed -->
       <aside class="sidebar-column">
         <!-- Robot Cards -->
-        <div class="robot-cards-container">
-          <!-- AMR 1 Card -->
-          <div class="robot-card" id="card-amr1">
-            <div class="robot-card-top">
-              <div class="robot-meta">
-                <span class="robot-badge amr1-badge">AMR 1</span>
-                <span class="robot-role">Priority Lead</span>
-              </div>
-              <span class="robot-state-tag" id="state-amr1">NORMAL_NAV</span>
-            </div>
-            <div class="robot-metrics-grid">
-              <div class="metric-item">
-                <label>POSITION</label>
-                <div class="metric-val" id="pos-amr1">-4.00, 0.00 m</div>
-              </div>
-              <div class="metric-item">
-                <label>VELOCITY</label>
-                <div class="metric-val" id="vel-amr1">0.00 m/s</div>
-              </div>
-              <div class="metric-item">
-                <label>HEADING</label>
-                <div class="metric-val" id="yaw-amr1">0.0&deg;</div>
-              </div>
-              <div class="metric-item">
-                <label>CHOKE DIST</label>
-                <div class="metric-val" id="dist-amr1">4.00 m</div>
-              </div>
-            </div>
-            <div class="battery-bar-container">
-              <div class="battery-label-row">
-                <span>BATTERY SOC</span>
-                <span id="batt-text-amr1">98.0% (25.1 V)</span>
-              </div>
-              <div class="battery-track">
-                <div class="battery-fill" id="batt-fill-amr1" style="width: 98%;"></div>
-              </div>
-            </div>
-          </div>
-
-          <!-- AMR 2 Card -->
-          <div class="robot-card" id="card-amr2">
-            <div class="robot-card-top">
-              <div class="robot-meta">
-                <span class="robot-badge amr2-badge">AMR 2</span>
-                <span class="robot-role">Counter Traversal</span>
-              </div>
-              <span class="robot-state-tag" id="state-amr2">NORMAL_NAV</span>
-            </div>
-            <div class="robot-metrics-grid">
-              <div class="metric-item">
-                <label>POSITION</label>
-                <div class="metric-val" id="pos-amr2">4.00, 0.00 m</div>
-              </div>
-              <div class="metric-item">
-                <label>VELOCITY</label>
-                <div class="metric-val" id="vel-amr2">0.00 m/s</div>
-              </div>
-              <div class="metric-item">
-                <label>HEADING</label>
-                <div class="metric-val" id="yaw-amr2">180.0&deg;</div>
-              </div>
-              <div class="metric-item">
-                <label>CHOKE DIST</label>
-                <div class="metric-val" id="dist-amr2">4.00 m</div>
-              </div>
-            </div>
-            <div class="battery-bar-container">
-              <div class="battery-label-row">
-                <span>BATTERY SOC</span>
-                <span id="batt-text-amr2">86.0% (24.6 V)</span>
-              </div>
-              <div class="battery-track">
-                <div class="battery-fill warning" id="batt-fill-amr2" style="width: 86%;"></div>
-              </div>
-            </div>
-          </div>
-
-          <!-- AMR 3 Card -->
-          <div class="robot-card" id="card-amr3">
-            <div class="robot-card-top">
-              <div class="robot-meta">
-                <span class="robot-badge amr3-badge">AMR 3</span>
-                <span class="robot-role">Cross-Traffic / Standby</span>
-              </div>
-              <span class="robot-state-tag" id="state-amr3">IDLE</span>
-            </div>
-            <div class="robot-metrics-grid">
-              <div class="metric-item">
-                <label>POSITION</label>
-                <div class="metric-val" id="pos-amr3">1.00, -4.00 m</div>
-              </div>
-              <div class="metric-item">
-                <label>VELOCITY</label>
-                <div class="metric-val" id="vel-amr3">0.00 m/s</div>
-              </div>
-              <div class="metric-item">
-                <label>HEADING</label>
-                <div class="metric-val" id="yaw-amr3">90.0&deg;</div>
-              </div>
-              <div class="metric-item">
-                <label>CHOKE DIST</label>
-                <div class="metric-val" id="dist-amr3">4.12 m</div>
-              </div>
-            </div>
-            <div class="battery-bar-container">
-              <div class="battery-label-row">
-                <span>BATTERY SOC</span>
-                <span id="batt-text-amr3">92.0% (24.9 V)</span>
-              </div>
-              <div class="battery-track">
-                <div class="battery-fill" id="batt-fill-amr3" style="width: 92%;"></div>
-              </div>
-            </div>
-          </div>
+        <div class="robot-cards-container" id="robotCardsContainer">
+          <!-- Dynamically generated by app.js based on live telemetry -->
         </div>
 
         <!-- CNP Auction Activity Feed -->

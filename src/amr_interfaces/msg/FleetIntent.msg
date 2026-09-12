@@ -29,3 +29,9 @@ uint8 current_state
 # Ground-truth bounding-box choke zone occupancy flag
 # True when robot's odometry (x,y) is inside the critical corridor reservation box
 bool is_in_choke_zone
+
+# Monotonic timestamp (seconds) when this robot first entered the approach
+# zone and began waiting to cross the choke point. 0.0 if not currently
+# approaching. Used for fair, starvation-free tie-break (earliest request
+# wins) instead of a static string-ID priority.
+float64 approach_request_time

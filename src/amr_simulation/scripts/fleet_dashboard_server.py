@@ -2,6 +2,7 @@
 """
 Fleet Dashboard Server & Real-time Telemetry Bridge
 Serves HTML5/Canvas UI on http://localhost:8080 and streams 10 Hz ROS 2 telemetry via Server-Sent Events (SSE).
+Dynamically discovers AMRs via ROS 2 topics and serves map definitions.
 """
 
 import os
@@ -27,7 +28,6 @@ class ReusableThreadingHTTPServer(ThreadingHTTPServer):
                 pass
         super().server_bind()
 
-
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
@@ -48,44 +48,35 @@ except ImportError:
     TaskBid = None
     TaskAward = None
 
-
 def quaternion_to_yaw(q):
     siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
     cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
     return math.atan2(siny_cosp, cosy_cosp)
 
-
 class FleetDashboardNode(Node):
-    def __init__(self, static_dir, host='0.0.0.0', port=8080):
+    def __init__(self, static_dir, map_dir, host='0.0.0.0', port=8080):
         super().__init__('fleet_dashboard_server')
         self.static_dir = static_dir
+        self.map_dir = map_dir
         self.host = host
         self.port = port
 
-        # Telemetry State Store
-        self.fleet_state = {
-            'amr1': {'x': -4.0, 'y': 0.0, 'yaw': 0.0, 'speed': 0.0, 'battery': 98.0, 'voltage': 25.1, 'state': 'NORMAL_NAV'},
-            'amr2': {'x': 4.0, 'y': 0.0, 'yaw': 3.1415, 'speed': 0.0, 'battery': 86.0, 'voltage': 24.6, 'state': 'NORMAL_NAV'},
-            'amr3': {'x': 1.0, 'y': -4.0, 'yaw': 1.5708, 'speed': 0.0, 'battery': 92.0, 'voltage': 24.9, 'state': 'IDLE'}
-        }
+        # Dynamic Telemetry State Store
+        self.fleet_state = {}
+        self.known_robots = set()
         self.state_lock = threading.Lock()
         self.event_queue = []
         self.queue_lock = threading.Lock()
 
-        # Odometry and Battery Subscriptions
-        for robot in ['amr1', 'amr2', 'amr3']:
-            self.create_subscription(
-                Odometry,
-                f'/{robot}/odom',
-                lambda msg, r=robot: self.odom_callback(r, msg),
-                10
-            )
-            self.create_subscription(
-                BatteryState,
-                f'/{robot}/battery_state',
-                lambda msg, r=robot: self.battery_callback(r, msg),
-                10
-            )
+        # TF2 listener for accurate global positioning
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.tf_timer = self.create_timer(0.1, self.tf_timer_callback)
+        
+        # Discovery timer
+        self.discovery_timer = self.create_timer(2.0, self.discover_robots)
+        
+        self.nav_clients = {}
 
         # Fleet Intent (QoS Best Effort)
         if FleetIntent:
@@ -104,23 +95,45 @@ class FleetDashboardNode(Node):
         if TaskAward:
             self.create_subscription(TaskAward, '/fleet/task_award', self.award_callback, 10)
 
-        # Publishers for Dispatching & Blockage
-        self.pub_amr1_goal = self.create_publisher(PoseStamped, '/amr1/goal_pose', 10)
-        self.pub_amr2_goal = self.create_publisher(PoseStamped, '/amr2/goal_pose', 10)
-        self.pub_amr3_goal = self.create_publisher(PoseStamped, '/amr3/goal_pose', 10)
+        # Blockage publisher (still hardcoded to amr1 for the demo test)
         self.pub_blockage = self.create_publisher(Bool, '/amr1/trigger_blockage', 10)
 
-        # TF2 listener for accurate global positioning
-        self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self)
-        self.tf_timer = self.create_timer(0.1, self.tf_timer_callback)
-
-        # Nav2 Action Clients for direct goal dispatch (no CNP dependency)
-        self.nav_clients = {}
-        for robot in ['amr1', 'amr2', 'amr3']:
-            self.nav_clients[robot] = ActionClient(self, NavigateToPose, f'/{robot}/navigate_to_pose')
-
         self.get_logger().info(f"FleetDashboardNode initialized. Dashboard files from: {self.static_dir}")
+        self.get_logger().info(f"Map directory: {self.map_dir}")
+
+    def discover_robots(self):
+        topics_and_types = self.get_topic_names_and_types()
+        active_discovered = set()
+        for topic_name, _ in topics_and_types:
+            if topic_name.endswith('/odom'):
+                parts = topic_name.split('/')
+                if len(parts) >= 3:
+                    robot_id = parts[1]
+                    active_discovered.add(robot_id)
+                    if robot_id not in self.known_robots:
+                        self.get_logger().info(f"Dynamically discovered new robot: {robot_id}")
+                        self.known_robots.add(robot_id)
+                        with self.state_lock:
+                            self.fleet_state[robot_id] = {'x': 0.0, 'y': 0.0, 'yaw': 0.0, 'speed': 0.0, 'battery': 100.0, 'voltage': 24.0, 'state': 'UNKNOWN', 'last_seen': time.time()}
+                        
+                        # Create subscriptions for this robot
+                        self.create_subscription(Odometry, f'/{robot_id}/odom', lambda msg, r=robot_id: self.odom_callback(r, msg), 10)
+                        self.create_subscription(BatteryState, f'/{robot_id}/battery_state', lambda msg, r=robot_id: self.battery_callback(r, msg), 10)
+                        self.nav_clients[robot_id] = ActionClient(self, NavigateToPose, f'/{robot_id}/navigate_to_pose')
+                        setattr(self, f'pub_{robot_id}_goal', self.create_publisher(PoseStamped, f'/{robot_id}/goal_pose', 10))
+
+        # Purge disconnected robots (no odom for 5 seconds)
+        current_time = time.time()
+        with self.state_lock:
+            stale_robots = []
+            for r_id, state in self.fleet_state.items():
+                if current_time - state.get('last_seen', current_time) > 5.0:
+                    stale_robots.append(r_id)
+            
+            for r_id in stale_robots:
+                self.get_logger().warning(f"Robot {r_id} disconnected. Purging from dashboard.")
+                self.known_robots.discard(r_id)
+                del self.fleet_state[r_id]
 
     def tf_timer_callback(self):
         with self.state_lock:
@@ -131,6 +144,7 @@ class FleetDashboardNode(Node):
                     self.fleet_state[robot_id]['y'] = round(float(trans.transform.translation.y), 2)
                     yaw = quaternion_to_yaw(trans.transform.rotation)
                     self.fleet_state[robot_id]['yaw'] = round(float(yaw), 3)
+                    self.fleet_state[robot_id]['last_seen'] = time.time()
                 except TransformException:
                     pass
 
@@ -141,6 +155,7 @@ class FleetDashboardNode(Node):
                 vy = msg.twist.twist.linear.y
                 speed = math.hypot(vx, vy)
                 self.fleet_state[robot_id]['speed'] = round(float(speed), 2)
+                self.fleet_state[robot_id]['last_seen'] = time.time()
 
     def battery_callback(self, robot_id, msg: BatteryState):
         with self.state_lock:
@@ -188,8 +203,11 @@ class FleetDashboardNode(Node):
 
     def dispatch_opposing_test(self):
         """Dispatches opposing goals across choke point via Nav2 action servers."""
+        if 'amr1' not in self.known_robots or 'amr2' not in self.known_robots:
+            return {'status': 'Failed: amr1 and amr2 must both be online for opposing test.'}
+
         self.get_logger().info("Dispatching opposing choke goals to AMR1 and AMR2...")
-        # amr1 goal -> 4.0, -1.5 (well clear of choke zone exit at x=1.5m)
+        # amr1 goal -> 4.0, -1.5
         g1 = PoseStamped()
         g1.header.frame_id = 'map'
         g1.header.stamp = self.get_clock().now().to_msg()
@@ -207,16 +225,14 @@ class FleetDashboardNode(Node):
         g2.pose.orientation.w = 0.0
         g2.pose.orientation.z = 1.0
         self._send_nav2_goal('amr2', g2)
+        return {'status': 'Opposing goals successfully dispatched to AMR 1 and AMR 2'}
 
     def _send_nav2_goal(self, robot_id, pose_stamped):
-        """Send goal directly to Nav2 action server for a specific robot."""
         client = self.nav_clients.get(robot_id)
         if client is None:
-            self.get_logger().error(f"No Nav2 action client for {robot_id}")
             return
         if not client.server_is_ready():
             self.get_logger().warning(f"Nav2 action server for {robot_id} not ready, falling back to topic")
-            # Fallback to topic-based dispatch
             pub = getattr(self, f'pub_{robot_id}_goal', None)
             if pub:
                 pub.publish(pose_stamped)
@@ -224,10 +240,8 @@ class FleetDashboardNode(Node):
         goal_msg = NavigateToPose.Goal()
         goal_msg.pose = pose_stamped
         client.send_goal_async(goal_msg)
-        self.get_logger().info(f"[{robot_id}] Nav2 goal dispatched via action server")
 
     def trigger_blockage_action(self):
-        """Sends synthetic blockage trigger to AMR1."""
         self.get_logger().warning("Triggering synthetic blockage on AMR 1...")
         msg = Bool()
         msg.data = True
@@ -239,10 +253,16 @@ class DashboardHTTPRequestHandler(SimpleHTTPRequestHandler):
         self.node = node
         super().__init__(*args, directory=node.static_dir, **kwargs)
 
+    def end_headers(self):
+        # Prevent browser caching of static files (HTML, JS, CSS)
+        self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+        self.send_header('Pragma', 'no-cache')
+        self.send_header('Expires', '0')
+        super().end_headers()
+
     def do_GET(self):
         parsed = urlparse(self.path)
         if parsed.path == '/events':
-            # Server-Sent Events (SSE) stream
             self.send_response(200)
             self.send_header('Content-Type', 'text/event-stream')
             self.send_header('Cache-Control', 'no-cache')
@@ -252,13 +272,11 @@ class DashboardHTTPRequestHandler(SimpleHTTPRequestHandler):
 
             try:
                 while True:
-                    # Send telemetry snapshot
                     with self.node.state_lock:
                         data = json.dumps(self.node.fleet_state)
                     self.wfile.write(f"event: telemetry\ndata: {data}\n\n".encode('utf-8'))
                     self.wfile.flush()
 
-                    # Send any queued CNP events
                     with self.node.queue_lock:
                         while self.node.event_queue:
                             ev = self.node.event_queue.pop(0)
@@ -266,7 +284,7 @@ class DashboardHTTPRequestHandler(SimpleHTTPRequestHandler):
                             self.wfile.write(f"event: cnp_event\ndata: {ev_data}\n\n".encode('utf-8'))
                             self.wfile.flush()
 
-                    time.sleep(0.1) # 10 Hz
+                    time.sleep(0.1)
             except (BrokenPipeError, ConnectionResetError):
                 pass
             return
@@ -277,17 +295,39 @@ class DashboardHTTPRequestHandler(SimpleHTTPRequestHandler):
             with self.node.state_lock:
                 self.wfile.write(json.dumps(self.node.fleet_state).encode('utf-8'))
             return
+        elif parsed.path == '/api/map.pgm':
+            map_path = os.path.join(self.node.map_dir, 'warehouse_map.pgm')
+            if os.path.exists(map_path):
+                self.send_response(200)
+                self.send_header('Content-Type', 'image/x-portable-graymap')
+                self.end_headers()
+                with open(map_path, 'rb') as f:
+                    self.wfile.write(f.read())
+            else:
+                self.send_error(404, "Map PGM not found")
+            return
+        elif parsed.path == '/api/map.yaml':
+            yaml_path = os.path.join(self.node.map_dir, 'warehouse_map.yaml')
+            if os.path.exists(yaml_path):
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/yaml')
+                self.end_headers()
+                with open(yaml_path, 'rb') as f:
+                    self.wfile.write(f.read())
+            else:
+                self.send_error(404, "Map YAML not found")
+            return
 
         super().do_GET()
 
     def do_POST(self):
         parsed = urlparse(self.path)
         if parsed.path == '/api/dispatch_opposing':
-            self.node.dispatch_opposing_test()
+            result = self.node.dispatch_opposing_test()
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
-            self.wfile.write(json.dumps({'status': 'Opposing goals successfully dispatched to AMR 1 and AMR 2'}).encode('utf-8'))
+            self.wfile.write(json.dumps(result).encode('utf-8'))
             return
         elif parsed.path == '/api/trigger_blockage':
             self.node.trigger_blockage_action()
@@ -300,28 +340,29 @@ class DashboardHTTPRequestHandler(SimpleHTTPRequestHandler):
         self.send_error(404, "Endpoint not found")
 
     def log_message(self, format, *args):
-        # Suppress routine GET logging for cleaner console
         return
-
 
 def main(args=None):
     rclpy.init(args=args)
 
-    # Locate dashboard files: look in src first, fallback to install share directory
     ws_dir = '/home/niket/amr_ws'
     src_dashboard = os.path.join(ws_dir, 'src', 'amr_simulation', 'dashboard')
+    
+    # Try locating map directory
+    map_dir = os.path.join(ws_dir, 'src', 'amr_simulation', 'maps')
+
     if os.path.isdir(src_dashboard):
         static_dir = src_dashboard
     else:
         try:
             pkg_share = get_package_share_directory('amr_simulation')
             static_dir = os.path.join(pkg_share, 'dashboard')
+            map_dir = os.path.join(pkg_share, 'maps')
         except Exception:
             static_dir = src_dashboard
 
-    node = FleetDashboardNode(static_dir=static_dir, port=8080)
+    node = FleetDashboardNode(static_dir=static_dir, map_dir=map_dir, port=8080)
 
-    # Launch HTTP Server in daemon thread
     def run_server():
         handler = lambda *hargs, **hkwargs: DashboardHTTPRequestHandler(*hargs, node=node, **hkwargs)
         server = None
@@ -336,9 +377,9 @@ def main(args=None):
             return
 
         port = server.server_address[1]
-        print("=" * 70)
-        print(f"  🚀 AMR FLEET DASHBOARD LIVE AT: http://localhost:{port}")
-        print("=" * 70)
+        print("=" * 70, flush=True)
+        print(f"  🚀 AMR FLEET DASHBOARD LIVE AT: http://localhost:{port}", flush=True)
+        print("=" * 70, flush=True)
         server.serve_forever()
 
     http_thread = threading.Thread(target=run_server, daemon=True)
@@ -351,7 +392,6 @@ def main(args=None):
     finally:
         node.destroy_node()
         rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()

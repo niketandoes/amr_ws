@@ -1,29 +1,35 @@
 #!/usr/bin/env python3
 """
-Decentralized Fleet Coordinator Node — Zone Reservation Protocol
+Decentralized Fleet Coordinator Node — Zone Reservation Protocol (v2)
 Implements peer-to-peer (P2P) right-of-way arbitration without central dispatchers.
 
 Protocol:
   1. A bounding-box defines the critical corridor zone (from warehouse.sdf geometry).
   2. Each robot broadcasts ground-truth zone occupancy via FleetIntent.is_in_choke_zone.
   3. Occupancy ALWAYS gates entry: if any peer is inside the zone (or clearing with
-     active hysteresis), all approaching peers yield — regardless of string-ID priority.
-  4. String-ID comparison is used ONLY as a tie-breaker when multiple robots are
-     waiting in the approach zone with an empty critical corridor.
-  5. Exit hysteresis requires a peer to report is_in_choke_zone=False for N
-     consecutive ticks (~300ms) before the corridor lock is released.
-  6. Stale peer intents (>1.5s without update) are pruned to prevent ghost lockups.
+     active hysteresis), all approaching peers yield.
+  4. Fail-safe cold start: a robot entering the approach zone with an incomplete
+     peer picture (hasn't yet heard from every expected fleet member) holds
+     briefly rather than assuming "no data = clear." Bounded by
+     APPROACH_PEER_GRACE_SEC so a genuinely dead peer can't deadlock the fleet.
+  5. Tie-break when the corridor is empty and multiple robots are waiting:
+     earliest approach_request_time wins (fair, starvation-free), string-ID
+     only breaks an exact timestamp tie.
+  6. Exit hysteresis requires a peer to report is_in_choke_zone=False for N
+     consecutive ticks (~500ms) before the corridor lock is released.
+  7. Stale peer intents (>1.5s without update) are pruned to prevent ghost lockups.
 
 Velocity Architecture:
-  - Nav2 controller_server publishes to cmd_vel_nav (priority 10)
+  - Nav2 controller_server publishes to cmd_vel_nav (twist_mux priority 10)
   - This coordinator publishes halt commands to cmd_vel_coord (priority 20)
   - twist_mux merges both onto cmd_vel for the Gazebo bridge
-  - On yield: cancel Nav2 goal + publish zero-twist to cmd_vel_coord
-  - On resume: re-dispatch cached goal to Nav2
+  - Resume relies on twist_mux's 0.5s per-topic timeout: once this node stops
+    publishing halts, twist_mux falls back to cmd_vel_nav automatically. Nav2's
+    own goal was never cancelled, so it keeps executing the moment its output
+    isn't being overridden — no cross-node goal-handle plumbing needed.
 
 Inputs:
   - /fleet/intent (amr_interfaces/msg/FleetIntent)
-  - navigate_to_pose action feedback (for goal caching)
 
 Outputs:
   - cmd_vel_coord (geometry_msgs/msg/TwistStamped) [Override during yielding via twist_mux]
@@ -31,78 +37,65 @@ Outputs:
 
 import rclpy
 from rclpy.node import Node
-from rclpy.action import ActionClient
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from geometry_msgs.msg import TwistStamped
-from nav2_msgs.action import NavigateToPose
 from amr_interfaces.msg import FleetIntent
-import math
 import time
 
-class DecentralizedCoordinator(Node):
-    """
-    Evaluates peer zone occupancy and bottleneck reservations at 50 Hz.
-    Uses bounding-box zone reservation with exit hysteresis for robust
-    collision-free choke point traversal.
-    """
 
-    # Critical corridor reservation bounding box (matches intent_broadcaster)
+class DecentralizedCoordinator(Node):
+
     CHOKE_X_MIN = -1.5
     CHOKE_X_MAX = 1.5
     CHOKE_Y_MIN = -1.2
     CHOKE_Y_MAX = 1.2
 
-    # Approach zone: robots within BOTH x and y ranges are candidates for conflict checks
     APPROACH_X_LIMIT = 3.5
     APPROACH_Y_LIMIT = 1.5
 
-    # Exit hysteresis: number of consecutive ticks peer must report zone-free
-    # At 10 Hz evaluation, 5 ticks ≈ 500ms
-    HYSTERESIS_TICKS_REQUIRED = 5
-
-    # Stale intent expiry: prune peer data older than this (seconds)
+    HYSTERESIS_TICKS_REQUIRED = 5      # ~500ms at 10Hz
     INTENT_EXPIRY_SEC = 1.5
+
+    # How long a robot will hold, at most, waiting to hear from every
+    # expected peer before proceeding on incomplete information. Keep this
+    # short — it only matters during startup jitter, never during steady
+    # -state running once every broadcaster is online.
+    APPROACH_PEER_GRACE_SEC = 2.0
 
     def __init__(self):
         super().__init__('decentralized_coordinator')
         self.robot_id = self.get_namespace().strip('/')
         if not self.robot_id:
             self.robot_id = 'default_amr'
-        
+
+        # Full fleet roster, so this node knows WHO it should be hearing
+        # from — not just reacting to whoever happens to show up.
+        self.declare_parameter('fleet_robot_ids', ['amr1', 'amr2', 'amr3'])
+        fleet_ids = self.get_parameter('fleet_robot_ids').value
+        self.expected_peers = [r for r in fleet_ids if r != self.robot_id]
+
         p2p_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.VOLATILE,
             depth=10
         )
-        
+
         self.intent_sub = self.create_subscription(FleetIntent, '/fleet/intent', self.intent_callback, p2p_qos)
-
-        # Publish halt commands to cmd_vel_coord (twist_mux priority 20 overrides Nav2)
         self.cmd_vel_pub = self.create_publisher(TwistStamped, 'cmd_vel_coord', 10)
-        
-        # Nav2 action client for clean goal cancel/re-dispatch during yielding
-        self._nav_action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
-        self._cached_goal = None       # NavigateToPose.Goal cached for re-dispatch
-        self._active_goal_handle = None  # Current goal handle for cancellation
-        self._is_nav_paused = False     # True when we have cancelled Nav2's goal
 
-        self.peer_intents = {}       # {peer_id: FleetIntent msg}
-        self.peer_timestamps = {}    # {peer_id: time.monotonic() of last received msg}
+        self.peer_intents = {}
+        self.peer_timestamps = {}
         self.my_intent = None
-
-        # Track which peer we are yielding to (or None)
         self.yielding_to = None
-
-        # Hysteresis counters: how many consecutive ticks each peer has been OUT of zone
         self.peer_clear_ticks = {}
-        
-        self.create_timer(0.1, self.evaluate_conflicts)  # 10 Hz (reduces cmd_vel jitter vs Nav2 20 Hz)
+        self._warned_incomplete_peers = False
+
+        self.create_timer(0.1, self.evaluate_conflicts)  # 10 Hz
         self.get_logger().info(
             f'[{self.robot_id}] Decentralized Coordinator online '
-            f'(Zone Reservation Protocol — box [{self.CHOKE_X_MIN},{self.CHOKE_X_MAX}] x '
-            f'[{self.CHOKE_Y_MIN},{self.CHOKE_Y_MAX}], '
-            f'hysteresis={self.HYSTERESIS_TICKS_REQUIRED} ticks, '
-            f'twist_mux output on cmd_vel_coord)'
+            f'(expecting peers: {self.expected_peers}, '
+            f'box [{self.CHOKE_X_MIN},{self.CHOKE_X_MAX}] x [{self.CHOKE_Y_MIN},{self.CHOKE_Y_MAX}], '
+            f'hysteresis={self.HYSTERESIS_TICKS_REQUIRED} ticks)'
         )
 
     def intent_callback(self, msg):
@@ -113,7 +106,6 @@ class DecentralizedCoordinator(Node):
             self.peer_timestamps[msg.robot_id] = time.monotonic()
 
     def _self_in_approach_zone(self):
-        """Check if this robot is within the approach zone (both X and Y limits)."""
         if not self.my_intent:
             return False
         x = self.my_intent.current_pose.position.x
@@ -121,7 +113,6 @@ class DecentralizedCoordinator(Node):
         return abs(x) <= self.APPROACH_X_LIMIT and abs(y) <= self.APPROACH_Y_LIMIT
 
     def _self_in_choke_zone(self):
-        """Check if this robot's odometry is inside the critical corridor box."""
         if not self.my_intent:
             return False
         x = self.my_intent.current_pose.position.x
@@ -130,18 +121,18 @@ class DecentralizedCoordinator(Node):
                 self.CHOKE_Y_MIN <= y <= self.CHOKE_Y_MAX)
 
     def _peer_confirmed_clear(self, peer_id):
-        """Return True only if the peer has been continuously out-of-zone for
-        the required hysteresis duration."""
         return self.peer_clear_ticks.get(peer_id, 0) >= self.HYSTERESIS_TICKS_REQUIRED
 
+    def _all_expected_peers_seen(self):
+        """True only if we've heard (recently — pruning already drops stale
+        entries) from every peer we expect to exist. False on cold start
+        before every robot's broadcaster has come online."""
+        return all(pid in self.peer_intents for pid in self.expected_peers)
+
     def _prune_stale_intents(self):
-        """Remove peer intents that haven't been refreshed within INTENT_EXPIRY_SEC.
-        Prevents ghost robot lockup when a peer crashes inside the choke zone."""
         now = time.monotonic()
-        stale_peers = [
-            pid for pid, ts in self.peer_timestamps.items()
-            if (now - ts) > self.INTENT_EXPIRY_SEC
-        ]
+        stale_peers = [pid for pid, ts in self.peer_timestamps.items()
+                       if (now - ts) > self.INTENT_EXPIRY_SEC]
         for pid in stale_peers:
             self.get_logger().warn(
                 f'[{self.robot_id}] Pruning stale intent from {pid} '
@@ -151,205 +142,103 @@ class DecentralizedCoordinator(Node):
             self.peer_intents.pop(pid, None)
             self.peer_timestamps.pop(pid, None)
             self.peer_clear_ticks.pop(pid, None)
-            # If we were yielding to this stale peer, resume immediately
             if self.yielding_to == pid:
                 self.yielding_to = None
-                self._resume_navigation()
 
     def evaluate_conflicts(self):
         if not self.my_intent:
             return
 
-        # ── Prune stale peer data to prevent ghost lockups ──
         self._prune_stale_intents()
 
-        # ── Update hysteresis counters for all peers ──
         for peer_id, intent in self.peer_intents.items():
             if intent.is_in_choke_zone:
                 self.peer_clear_ticks[peer_id] = 0
             else:
                 self.peer_clear_ticks[peer_id] = self.peer_clear_ticks.get(peer_id, 0) + 1
 
-        # ── If currently yielding, check if we can resume ──
         if self.yielding_to:
             if self.yielding_to in self.peer_intents:
                 peer = self.peer_intents[self.yielding_to]
-                # Require BOTH: peer reports out-of-zone AND hysteresis is satisfied
                 if not peer.is_in_choke_zone and self._peer_confirmed_clear(self.yielding_to):
                     self.get_logger().info(
-                        f'[{self.robot_id}] {self.yielding_to} has confirmed clear of zone '
-                        f'(hysteresis satisfied). Resuming navigation.'
+                        f'[{self.robot_id}] {self.yielding_to} confirmed clear. Resuming.'
                     )
                     self.yielding_to = None
-                    self._resume_navigation()
                 else:
                     self._halt(self.yielding_to)
                     return
             else:
-                # Peer disappeared from mesh — assume clear
-                self.get_logger().info(
-                    f'[{self.robot_id}] {self.yielding_to} disappeared from mesh. Resuming.'
-                )
+                self.get_logger().info(f'[{self.robot_id}] {self.yielding_to} disappeared from mesh. Resuming.')
                 self.yielding_to = None
-                self._resume_navigation()
 
-        # ── If we are not in the approach zone, nothing to do ──
         if not self._self_in_approach_zone():
+            self._warned_incomplete_peers = False
             return
+
+        # ── FAIL-SAFE: cold-start / packet-loss guard ──
+        # Don't treat "no peer data yet" as "corridor is clear." Hold briefly
+        # until every expected peer has been heard from, or until the grace
+        # period expires (so a genuinely dead peer can't deadlock us forever).
+        if not self._all_expected_peers_seen():
+            my_wait_start = self.my_intent.approach_request_time
+            elapsed = (time.monotonic() - my_wait_start) if my_wait_start > 0 else 0.0
+            if elapsed < self.APPROACH_PEER_GRACE_SEC:
+                self.get_logger().warn(
+                    f'[{self.robot_id}] Incomplete peer picture on approach '
+                    f'(missing: {[p for p in self.expected_peers if p not in self.peer_intents]}) — '
+                    f'holding for up to {self.APPROACH_PEER_GRACE_SEC}s before proceeding.',
+                    throttle_duration_sec=1.0
+                )
+                self.yielding_to = 'UNKNOWN_PEER'
+                self._halt('an unseen peer (grace period)')
+                return
+            elif not self._warned_incomplete_peers:
+                self.get_logger().warn(
+                    f'[{self.robot_id}] Grace period expired, still missing peers. '
+                    f'Proceeding on incomplete information.'
+                )
+                self._warned_incomplete_peers = True
 
         i_am_in_zone = self._self_in_choke_zone()
 
-        # ── RULE 1: Occupancy gate — if any peer is inside the zone (or still in
-        # hysteresis window), we must yield regardless of ID priority ──
+        # ── RULE 1: Occupancy gate ──
         for peer_id, intent in self.peer_intents.items():
             peer_in_zone = intent.is_in_choke_zone
             peer_clearing = not peer_in_zone and not self._peer_confirmed_clear(peer_id)
-
             if peer_in_zone or peer_clearing:
-                # A peer physically occupies (or is still clearing) the corridor
                 if not i_am_in_zone:
-                    # We are approaching but not inside — yield unconditionally
                     self.yielding_to = peer_id
                     self._halt(peer_id)
                     return
-                # If WE are also in the zone, we don't halt ourselves (we need to
-                # exit). The peer's coordinator will handle its own yielding logic.
 
-        # ── RULE 2: Tie-break — both robots are in approach zone, corridor is empty.
-        # Use deterministic string-ID comparison: lowest ID proceeds first. ──
+        # ── RULE 2: Fair tie-break — earliest requester wins ──
         approaching_peers = []
         for peer_id, intent in self.peer_intents.items():
-            peer_x = intent.current_pose.position.x
-            peer_y = intent.current_pose.position.y
-            if abs(peer_x) <= self.APPROACH_X_LIMIT and abs(peer_y) <= self.APPROACH_Y_LIMIT:
-                approaching_peers.append(peer_id)
+            px, py = intent.current_pose.position.x, intent.current_pose.position.y
+            if abs(px) <= self.APPROACH_X_LIMIT and abs(py) <= self.APPROACH_Y_LIMIT:
+                req_time = intent.approach_request_time if intent.approach_request_time > 0 else float('inf')
+                approaching_peers.append((req_time, peer_id))
 
         if not approaching_peers:
-            return  # No peers in approach zone — proceed freely
+            return  # No peers approaching, and we've confirmed via the grace check above
 
-        # Deterministic arbitration: lowest string ID gets right-of-way
-        all_candidates = approaching_peers + [self.robot_id]
-        all_candidates.sort()
-        winner_id = all_candidates[0]
+        my_req_time = self.my_intent.approach_request_time if self.my_intent.approach_request_time > 0 else float('inf')
+        all_candidates = approaching_peers + [(my_req_time, self.robot_id)]
+        all_candidates.sort()  # (timestamp, id) — earliest wins, id breaks exact ties
+        winner_id = all_candidates[0][1]
 
         if self.robot_id != winner_id:
             self.yielding_to = winner_id
             self._halt(winner_id)
 
-    def _halt(self, winner_id):
-        """Halt the robot by publishing zero-twist to cmd_vel_coord (twist_mux overrides
-        Nav2's cmd_vel_nav) and cancelling the active Nav2 navigation goal."""
-        self.get_logger().info(
-            f'[{self.robot_id}] Yielding to {winner_id} at choke zone.',
-            throttle_duration_sec=1.5
-        )
-        # Immediate velocity suppression via twist_mux priority override
+    def _halt(self, reason):
+        self.get_logger().info(f'[{self.robot_id}] Yielding to {reason} at choke zone.', throttle_duration_sec=1.5)
         halt_msg = TwistStamped()
         halt_msg.header.stamp = self.get_clock().now().to_msg()
         halt_msg.header.frame_id = f'{self.robot_id}/base_footprint'
         self.cmd_vel_pub.publish(halt_msg)
 
-        # Cancel Nav2 goal to prevent progress checker timeout and recovery triggers
-        self._cancel_navigation()
-
-    def _cancel_navigation(self):
-        """Cancel the active Nav2 NavigateToPose goal and cache it for re-dispatch.
-        Prevents Nav2's progress checker from timing out during the yield hold."""
-        if self._is_nav_paused:
-            return  # Already paused, no-op
-
-        if not self._nav_action_client.server_is_ready():
-            self.get_logger().warn(
-                f'[{self.robot_id}] NavigateToPose action server not ready, '
-                f'cannot cancel goal. twist_mux halt still active.',
-                throttle_duration_sec=5.0
-            )
-            self._is_nav_paused = True
-            return
-
-        # Cancel the tracked goal handle if we have one from a re-dispatch
-        if self._active_goal_handle is not None:
-            self.get_logger().info(
-                f'[{self.robot_id}] Cancelling tracked Nav2 goal for yield hold.',
-                throttle_duration_sec=2.0
-            )
-            self._active_goal_handle.cancel_goal_async()
-        else:
-            # No tracked handle — the goal was dispatched externally (e.g., by task_allocator_cnp).
-            # twist_mux zero-twist override is still effective via cmd_vel_coord priority.
-            # The external dispatcher retains its own goal handle.
-            self.get_logger().info(
-                f'[{self.robot_id}] No tracked goal handle to cancel. '
-                f'twist_mux halt active on cmd_vel_coord.',
-                throttle_duration_sec=2.0
-            )
-        self._is_nav_paused = True
-
-    def _resume_navigation(self):
-        """Re-dispatch the cached NavigateToPose goal after the corridor clears.
-        If no cached goal exists, Nav2 will simply remain idle until the next
-        external goal dispatch (e.g., from task_allocator_cnp)."""
-        if not self._is_nav_paused:
-            return  # Not paused, no-op
-
-        self._is_nav_paused = False
-
-        if self._cached_goal is None:
-            self.get_logger().info(
-                f'[{self.robot_id}] Nav2 resumed (no cached goal to re-dispatch, '
-                f'awaiting next goal from task allocator).',
-                throttle_duration_sec=2.0
-            )
-            return
-
-        if not self._nav_action_client.server_is_ready():
-            self.get_logger().warn(
-                f'[{self.robot_id}] NavigateToPose action server not ready, '
-                f'cannot re-dispatch cached goal.',
-                throttle_duration_sec=5.0
-            )
-            return
-
-        self.get_logger().info(
-            f'[{self.robot_id}] Corridor clear — re-dispatching cached Nav2 goal '
-            f'({self._cached_goal.pose.pose.position.x:.2f}, '
-            f'{self._cached_goal.pose.pose.position.y:.2f}).'
-        )
-        send_future = self._nav_action_client.send_goal_async(
-            self._cached_goal,
-            feedback_callback=self._nav_feedback_callback
-        )
-        send_future.add_done_callback(self._goal_response_callback)
-
-    def _goal_response_callback(self, future):
-        """Track the goal handle from re-dispatched goals for future cancellation."""
-        goal_handle = future.result()
-        if goal_handle is not None and goal_handle.accepted:
-            self._active_goal_handle = goal_handle
-            self.get_logger().info(
-                f'[{self.robot_id}] Re-dispatched Nav2 goal accepted.',
-                throttle_duration_sec=2.0
-            )
-        else:
-            self.get_logger().warn(
-                f'[{self.robot_id}] Re-dispatched Nav2 goal was rejected!',
-                throttle_duration_sec=2.0
-            )
-
-    def _nav_feedback_callback(self, feedback_msg):
-        """Feedback callback for re-dispatched goals. Goal is already cached."""
-        pass  # Goal is already cached from the original dispatch
-
-    def cache_goal(self, goal_msg):
-        """Public method for external nodes (e.g., task_allocator_cnp) to register
-        the current navigation goal with the coordinator for yield/resume caching.
-        
-        Can also be called via a ROS 2 service or topic subscription if needed."""
-        self._cached_goal = goal_msg
-        self.get_logger().debug(
-            f'[{self.robot_id}] Cached Nav2 goal: '
-            f'({goal_msg.pose.pose.position.x:.2f}, {goal_msg.pose.pose.position.y:.2f})'
-        )
 
 def main():
     rclpy.init()
@@ -360,6 +249,7 @@ def main():
         pass
     node.destroy_node()
     rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()
