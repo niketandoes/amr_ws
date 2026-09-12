@@ -27,6 +27,8 @@ def update_params_dict(data, name):
                 new_dict[k] = f'/{name}/scan'
             elif k == 'topic' and isinstance(v, str) and 'odom' in v:
                 new_dict[k] = f'/{name}/odom'
+            elif k == 'map_topic':
+                new_dict[k] = f'/{name}/map'
             else:
                 new_dict[k] = update_params_dict(v, name)
         return new_dict
@@ -54,7 +56,8 @@ def launch_setup(context, *args, **kwargs):
         output='screen',
         parameters=[{
             'robot_description': ParameterValue(Command(['xacro ', xacro_file, f' robot_name:={name}/']), value_type=str),
-            'use_sim_time': True
+            'use_sim_time': True,
+            'publish_frequency': 10.0
         }],
         remappings=[
             ('tf', '/tf'),
@@ -84,23 +87,21 @@ def launch_setup(context, *args, **kwargs):
         namespace=name,
         arguments=[
             f'/{name}/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
-            f'/{name}/cmd_vel@geometry_msgs/msg/TwistStamped]gz.msgs.Twist',
+            f'/{name}/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist',
             f'/{name}/odom@nav_msgs/msg/Odometry[gz.msgs.Odometry',
-            f'/{name}/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V'
-        ],
-        remappings=[
-            (f'/{name}/tf', '/tf')
+            f'/{name}/joint_states@sensor_msgs/msg/JointState[gz.msgs.Model'
         ],
         output='screen'
     )
+
 
     # Build custom YAML dictionary for this robot namespace
     with open(nav2_params_file, 'r') as f:
         base_params = yaml.safe_load(f)
 
-    robot_params = {}
+    robot_params = {'/**': {}}
     for key, value in base_params.items():
-        robot_params[f'{name}/{key}'] = update_params_dict(value, name)
+        robot_params['/**'][key] = update_params_dict(value, name)
 
     tmp_params = f'/tmp/nav2_params_{name}.yaml'
     with open(tmp_params, 'w') as f:

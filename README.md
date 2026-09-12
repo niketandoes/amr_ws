@@ -93,7 +93,7 @@ The system features three differential-drive Autonomous Mobile Robots (`amr1`, `
 amr_ws/
 ├── .gitignore                          # Ignores build/, install/, log/, and temporary files
 ├── README.md                           # System documentation
-├── Detailed.md                         # Technical protocol and specification
+├── GUIDE.md                            # Comprehensive simulation & launch guide
 ├── benchmark_results.csv               # Historical benchmark trial logs
 └── src/
     ├── amr_interfaces/                 # Custom ROS 2 Interface Definitions

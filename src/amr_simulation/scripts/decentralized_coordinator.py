@@ -38,28 +38,24 @@ Outputs:
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
-from geometry_msgs.msg import TwistStamped
+from geometry_msgs.msg import Twist
 from amr_interfaces.msg import FleetIntent
 import time
 
 
 class DecentralizedCoordinator(Node):
 
-    CHOKE_X_MIN = -0.8
-    CHOKE_X_MAX = 0.8
-    CHOKE_Y_MIN = -0.60
-    CHOKE_Y_MAX = 0.60
+    CHOKE_X_MIN = -1.0
+    CHOKE_X_MAX = 1.0
+    CHOKE_Y_MIN = -0.80
+    CHOKE_Y_MAX = 0.80
 
-    APPROACH_X_LIMIT = 3.5
-    APPROACH_Y_LIMIT = 1.2
+    APPROACH_X_LIMIT = 4.0
+    APPROACH_Y_LIMIT = 2.5
 
     HYSTERESIS_TICKS_REQUIRED = 5      # ~500ms at 10Hz
     INTENT_EXPIRY_SEC = 1.5
 
-    # How long a robot will hold, at most, waiting to hear from every
-    # expected peer before proceeding on incomplete information. Keep this
-    # short — it only matters during startup jitter, never during steady
-    # -state running once every broadcaster is online.
     APPROACH_PEER_GRACE_SEC = 2.0
 
     def __init__(self):
@@ -68,8 +64,6 @@ class DecentralizedCoordinator(Node):
         if not self.robot_id:
             self.robot_id = 'default_amr'
 
-        # Full fleet roster, so this node knows WHO it should be hearing
-        # from — not just reacting to whoever happens to show up.
         self.declare_parameter('fleet_robot_ids', ['amr1', 'amr2', 'amr3'])
         fleet_ids = self.get_parameter('fleet_robot_ids').value
         self.expected_peers = [r for r in fleet_ids if r != self.robot_id]
@@ -81,7 +75,7 @@ class DecentralizedCoordinator(Node):
         )
 
         self.intent_sub = self.create_subscription(FleetIntent, '/fleet/intent', self.intent_callback, p2p_qos)
-        self.cmd_vel_pub = self.create_publisher(TwistStamped, 'cmd_vel_coord', 10)
+        self.cmd_vel_pub = self.create_publisher(Twist, 'cmd_vel_coord', 10)
 
         self.peer_intents = {}
         self.peer_timestamps = {}
@@ -89,6 +83,7 @@ class DecentralizedCoordinator(Node):
         self.yielding_to = None
         self.peer_clear_ticks = {}
         self.peer_has_entered_zone = {}
+        self.peer_has_passed = {}
         self._warned_incomplete_peers = False
 
         self.create_timer(0.1, self.evaluate_conflicts)  # 10 Hz
@@ -121,13 +116,17 @@ class DecentralizedCoordinator(Node):
         return (self.CHOKE_X_MIN <= x <= self.CHOKE_X_MAX and
                 self.CHOKE_Y_MIN <= y <= self.CHOKE_Y_MAX)
 
+    def _is_peer_in_approach_or_choke(self, peer_intent):
+        px = peer_intent.current_pose.position.x
+        py = peer_intent.current_pose.position.y
+        in_choke = (self.CHOKE_X_MIN <= px <= self.CHOKE_X_MAX and self.CHOKE_Y_MIN <= py <= self.CHOKE_Y_MAX)
+        in_approach = (abs(px) <= self.APPROACH_X_LIMIT and abs(py) <= self.APPROACH_Y_LIMIT)
+        return in_choke or in_approach
+
     def _peer_confirmed_clear(self, peer_id):
         return self.peer_clear_ticks.get(peer_id, 0) >= self.HYSTERESIS_TICKS_REQUIRED
 
     def _all_expected_peers_seen(self):
-        """True only if we've heard (recently — pruning already drops stale
-        entries) from every peer we expect to exist. False on cold start
-        before every robot's broadcaster has come online."""
         return all(pid in self.peer_intents for pid in self.expected_peers)
 
     def _prune_stale_intents(self):
@@ -144,6 +143,7 @@ class DecentralizedCoordinator(Node):
             self.peer_timestamps.pop(pid, None)
             self.peer_clear_ticks.pop(pid, None)
             self.peer_has_entered_zone.pop(pid, None)
+            self.peer_has_passed.pop(pid, None)
             if self.yielding_to == pid:
                 self.yielding_to = None
 
@@ -160,12 +160,22 @@ class DecentralizedCoordinator(Node):
             else:
                 self.peer_clear_ticks[peer_id] = self.peer_clear_ticks.get(peer_id, 0) + 1
 
-        if self.yielding_to:
+            if self.peer_has_passed.get(peer_id, False) and not self._is_peer_in_approach_or_choke(intent):
+                self.peer_has_passed[peer_id] = False
+
+        if self.yielding_to and self.yielding_to != 'UNKNOWN_PEER':
             if self.yielding_to in self.peer_intents:
                 peer = self.peer_intents[self.yielding_to]
-                if not peer.is_in_choke_zone and self._peer_confirmed_clear(self.yielding_to):
+                has_entered = self.peer_has_entered_zone.get(self.yielding_to, False)
+                if has_entered and not peer.is_in_choke_zone and self._peer_confirmed_clear(self.yielding_to):
                     self.get_logger().info(
-                        f'[{self.robot_id}] {self.yielding_to} confirmed clear. Resuming.'
+                        f'[{self.robot_id}] {self.yielding_to} completed choke transit & confirmed clear. Resuming.'
+                    )
+                    self.peer_has_passed[self.yielding_to] = True
+                    self.yielding_to = None
+                elif not self._is_peer_in_approach_or_choke(peer):
+                    self.get_logger().info(
+                        f'[{self.robot_id}] {self.yielding_to} left approach/choke zone. Resuming.'
                     )
                     self.yielding_to = None
                 else:
@@ -179,10 +189,6 @@ class DecentralizedCoordinator(Node):
             self._warned_incomplete_peers = False
             return
 
-        # ── FAIL-SAFE: cold-start / packet-loss guard ──
-        # Don't treat "no peer data yet" as "corridor is clear." Hold briefly
-        # until every expected peer has been heard from, or until the grace
-        # period expires (so a genuinely dead peer can't deadlock us forever).
         if not self._all_expected_peers_seen():
             my_wait_start = self.my_intent.approach_request_time
             elapsed = (time.monotonic() - my_wait_start) if my_wait_start > 0 else 0.0
@@ -198,15 +204,16 @@ class DecentralizedCoordinator(Node):
                 return
             elif not self._warned_incomplete_peers:
                 self.get_logger().warn(
-                    f'[{self.robot_id}] Grace period expired, still missing peers. '
-                    f'Proceeding on incomplete information.'
+                    f'[{self.robot_id}] Grace period expired, still missing peers. Proceeding.'
                 )
                 self._warned_incomplete_peers = True
 
         i_am_in_zone = self._self_in_choke_zone()
 
-        # ── RULE 1: Occupancy gate ──
         for peer_id, intent in self.peer_intents.items():
+            if self.peer_has_passed.get(peer_id, False):
+                continue
+
             peer_in_zone = intent.is_in_choke_zone
             peer_clearing = not peer_in_zone and self.peer_has_entered_zone.get(peer_id, False) and not self._peer_confirmed_clear(peer_id)
             if peer_in_zone or peer_clearing:
@@ -215,23 +222,25 @@ class DecentralizedCoordinator(Node):
                     self._halt(peer_id)
                     return
 
-        # ── RULE 2: Fair tie-break — earliest requester wins ──
         if i_am_in_zone:
-            return  # Do not halt if we are already occupying the corridor
-        
+            return
+
         approaching_peers = []
         for peer_id, intent in self.peer_intents.items():
+            if self.peer_has_passed.get(peer_id, False):
+                continue
+
             px, py = intent.current_pose.position.x, intent.current_pose.position.y
             if abs(px) <= self.APPROACH_X_LIMIT and abs(py) <= self.APPROACH_Y_LIMIT:
                 req_time = intent.approach_request_time if intent.approach_request_time > 0 else float('inf')
                 approaching_peers.append((req_time, peer_id))
 
         if not approaching_peers:
-            return  # No peers approaching, and we've confirmed via the grace check above
+            return
 
         my_req_time = self.my_intent.approach_request_time if self.my_intent.approach_request_time > 0 else float('inf')
         all_candidates = approaching_peers + [(my_req_time, self.robot_id)]
-        all_candidates.sort()  # (timestamp, id) — earliest wins, id breaks exact ties
+        all_candidates.sort()
         winner_id = all_candidates[0][1]
 
         if self.robot_id != winner_id:
@@ -240,9 +249,7 @@ class DecentralizedCoordinator(Node):
 
     def _halt(self, reason):
         self.get_logger().info(f'[{self.robot_id}] Yielding to {reason} at choke zone.', throttle_duration_sec=1.5)
-        halt_msg = TwistStamped()
-        halt_msg.header.stamp = self.get_clock().now().to_msg()
-        halt_msg.header.frame_id = f'{self.robot_id}/base_footprint'
+        halt_msg = Twist()
         self.cmd_vel_pub.publish(halt_msg)
 
 
@@ -253,8 +260,11 @@ def main():
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
-    node.destroy_node()
-    rclpy.shutdown()
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
 
 
 if __name__ == '__main__':

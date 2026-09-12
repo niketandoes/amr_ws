@@ -1,6 +1,6 @@
-twist_mux:
+/**:
   ros__parameters:
-    use_stamped: true
+    use_stamped: false
     topics:
       coordinator:
         topic: cmd_vel_coord

@@ -59,21 +59,28 @@ ros2 run amr_simulation navigate_choke_point.py
 ```
 
 ### Option C: RViz2 Visualization Commands
-To visualize robot models, TF transforms (`/tf`), costmaps, laser scans, and active Nav2 trajectories:
+To visualize robot models (`amr1`, `amr2`, `amr3`), TF transforms (`/tf`), costmaps, laser scans, and active Nav2 trajectories:
 
-**1. Launch RViz2 Standalone (Default Config `view_amr.rviz`):**
+**1. Launch Everything with RViz2 in One Command:**
+```bash
+source ~/amr_ws/install/setup.bash
+ros2 launch amr_simulation multi_robot_warehouse.launch.py launch_rviz:=true
+```
+
+**2. Open RViz2 in a New Terminal while Simulation is Already Running:**
 ```bash
 source ~/amr_ws/install/setup.bash
 ros2 launch amr_simulation rviz.launch.py
 ```
+*(Loads `multi_amr.rviz` preconfigured with robot models and colored laser scans for `amr1`, `amr2`, and `amr3`)*
 
-**2. Launch RViz2 for a Specific Namespace or Custom Config:**
+**3. Launch RViz2 for Single Robot or Custom Config:**
 ```bash
 source ~/amr_ws/install/setup.bash
-ros2 launch amr_simulation rviz.launch.py namespace:=amr1 rviz_config:=src/amr_simulation/config/view_amr.rviz
+ros2 launch amr_simulation rviz.launch.py rviz_config:=src/amr_simulation/config/view_amr.rviz
 ```
 
-**3. Launch Single Robot World bringing up RViz2 automatically:**
+**4. Launch Single Robot World bringing up RViz2 automatically:**
 ```bash
 source ~/amr_ws/install/setup.bash
 ros2 launch amr_simulation warehouse_world.launch.py rviz:=true
@@ -83,7 +90,7 @@ ros2 launch amr_simulation warehouse_world.launch.py rviz:=true
 > **Benchmark Logging:** Whenever multi-robot launches or `warehouse_world.launch.py` are executed, the `benchmark_logger` node automatically records performance metrics (task completion time, travel distance, minimum robot clearance, and deadlock duration) and exports them to `~/amr_ws/benchmark_results.csv`.
 
 > [!TIP]
-> **Cleanup:** If Gazebo or ROS nodes hang, you can forcefully clean them up before a fresh launch using:
+> **Automatic Process Cleanup:** The simulation launch files (`multi_robot_warehouse.launch.py` and `warehouse_world.launch.py`) now automatically detect and kill lingering Nav2 zombie processes (`/opt/ros/humble/lib/nav2_*`) before spawning new instances to prevent duplicate node conflicts. For a complete manual teardown of Gazebo and ROS bridges, you can run:
 > `pkill -9 -f "gazebo|gzserver|gzclient|ros_gz_bridge|nav2|bt_navigator|component_container"`
 
 ---
@@ -96,7 +103,7 @@ These files orchestrate starting multiple ROS 2 nodes at once.
 
 | File | Launch Command / Arguments | Purpose |
 |---|---|---|
-| **`multi_robot_warehouse.launch.py`** | `ros2 launch amr_simulation multi_robot_warehouse.launch.py` | **The Main Entrypoint.** Includes all modular launch files to bring up the world, robots (`amr1`, `amr2`, `amr3`), web dashboard, and the benchmark logger. Toggles: `launch_amr1:=true`, `launch_amr2:=true`, `launch_amr3:=true`, `launch_dashboard:=true`. |
+| **`multi_robot_warehouse.launch.py`** | `ros2 launch amr_simulation multi_robot_warehouse.launch.py` | **The Main Entrypoint.** Includes all modular launch files to bring up the world, robots (`amr1`, `amr2`, `amr3`), web dashboard, and the benchmark logger. Toggles: `launch_amr1:=true`, `launch_amr2:=true`, `launch_amr3:=true`, `launch_dashboard:=true`, `launch_rviz:=true`. |
 | **`rviz.launch.py`** | `ros2 launch amr_simulation rviz.launch.py [rviz_config:=...] [namespace:=...]` | **RViz2 Visualization.** Brings up RViz2 initialized with `view_amr.rviz` configuration for monitoring fleet TF trees, costmaps, laser scans, and global path planners. |
 | **`warehouse_world.launch.py`** | `ros2 launch amr_simulation warehouse_world.launch.py [rviz:=true]` | Brings up the Gazebo world, robot state publisher, entity spawner, ROS-GZ bridges, Nav2 stack, `twist_mux`, `benchmark_logger`, and optionally launches RViz2 when `rviz:=true` is passed. |
 | **`gazebo_environment.launch.py`** | `ros2 launch amr_simulation gazebo_environment.launch.py` | Launches only the Gazebo simulation world (`warehouse.sdf`) and global clock bridge. Run this first when debugging! |

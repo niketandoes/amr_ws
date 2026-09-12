@@ -74,7 +74,8 @@ class ChokePointNavigator(Node):
         goal_handle = future.result()
         if not goal_handle.accepted:
             self.get_logger().error('Goal was rejected by Nav2!')
-            rclpy.shutdown()
+            if rclpy.ok():
+                rclpy.shutdown()
             return
 
         self.get_logger().info('Goal accepted by Nav2! Tracking navigation progress...')
@@ -102,7 +103,8 @@ class ChokePointNavigator(Node):
             self.get_logger().error('Goal was ABORTED!')
         else:
             self.get_logger().info(f'Goal finished with status code: {status}')
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 def main(args=None):
     rclpy.init(args=args)

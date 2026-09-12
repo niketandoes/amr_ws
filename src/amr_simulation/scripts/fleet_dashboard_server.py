@@ -32,7 +32,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Twist
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import BatteryState
 from std_msgs.msg import Bool
@@ -52,6 +52,12 @@ def quaternion_to_yaw(q):
     siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
     cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
     return math.atan2(siny_cosp, cosy_cosp)
+
+DEFAULT_INITIAL_POSES = {
+    'amr1': {'x': -4.0, 'y': 0.0, 'yaw': 0.0},
+    'amr2': {'x': 4.0, 'y': 0.0, 'yaw': 3.14159},
+    'amr3': {'x': 1.0, 'y': -4.0, 'yaw': 1.5708}
+}
 
 class FleetDashboardNode(Node):
     def __init__(self, static_dir, map_dir, host='0.0.0.0', port=8080):
@@ -123,6 +129,8 @@ class FleetDashboardNode(Node):
                             self.create_subscription(BatteryState, f'/{robot_id}/battery_state', lambda msg, r=robot_id: self.battery_callback(r, msg), 10)
                             self.nav_clients[robot_id] = ActionClient(self, NavigateToPose, f'/{robot_id}/navigate_to_pose')
                             setattr(self, f'pub_{robot_id}_goal', self.create_publisher(PoseStamped, f'/{robot_id}/goal_pose', 10))
+                            setattr(self, f'pub_{robot_id}_initialpose', self.create_publisher(PoseWithCovarianceStamped, f'/{robot_id}/initialpose', 10))
+                            setattr(self, f'pub_{robot_id}_cmd_vel', self.create_publisher(Twist, f'/{robot_id}/cmd_vel', 10))
                             self.subscribed_robots.add(robot_id)
 
         # Purge disconnected robots (no odom for 5 seconds)
@@ -250,6 +258,63 @@ class FleetDashboardNode(Node):
         msg.data = True
         self.pub_blockage.publish(msg)
 
+    def reset_fleet_poses(self):
+        """Resets all active AMRs to their home spawn poses and clears active goals."""
+        self.get_logger().info("Resetting fleet poses...")
+        import subprocess
+
+        target_robots = set(self.known_robots) | {'amr1', 'amr2', 'amr3'}
+
+        for robot_id in target_robots:
+            pose_cfg = DEFAULT_INITIAL_POSES.get(robot_id, {'x': 0.0, 'y': 0.0, 'yaw': 0.0})
+            x = pose_cfg['x']
+            y = pose_cfg['y']
+            yaw = pose_cfg['yaw']
+
+            # 1. Stop motion (zero velocity)
+            pub_vel = getattr(self, f'pub_{robot_id}_cmd_vel', None)
+            if pub_vel is None:
+                pub_vel = self.create_publisher(Twist, f'/{robot_id}/cmd_vel', 10)
+                setattr(self, f'pub_{robot_id}_cmd_vel', pub_vel)
+            tw = Twist()
+            pub_vel.publish(tw)
+
+            # 2. Publish initialpose to ROS 2 localizer / Nav2
+            pub_init = getattr(self, f'pub_{robot_id}_initialpose', None)
+            if pub_init is None:
+                pub_init = self.create_publisher(PoseWithCovarianceStamped, f'/{robot_id}/initialpose', 10)
+                setattr(self, f'pub_{robot_id}_initialpose', pub_init)
+
+            init_msg = PoseWithCovarianceStamped()
+            init_msg.header.frame_id = 'map'
+            init_msg.header.stamp = self.get_clock().now().to_msg()
+            init_msg.pose.pose.position.x = x
+            init_msg.pose.pose.position.y = y
+            init_msg.pose.pose.orientation.z = math.sin(yaw / 2.0)
+            init_msg.pose.pose.orientation.w = math.cos(yaw / 2.0)
+            init_msg.pose.covariance[0] = 0.25
+            init_msg.pose.covariance[7] = 0.25
+            init_msg.pose.covariance[35] = 0.0685
+            pub_init.publish(init_msg)
+
+            # 3. Best-effort Ignition Gazebo entity pose reset
+            try:
+                qw = math.cos(yaw / 2.0)
+                qz = math.sin(yaw / 2.0)
+                cmd = [
+                    'ign', 'service',
+                    '-s', '/world/warehouse_world/set_pose',
+                    '--reqtype', 'ign.msgs.Pose',
+                    '--reptype', 'ign.msgs.Boolean',
+                    '--timeout', '1000',
+                    '--req', f'name: "{robot_id}", position: {{x: {x}, y: {y}, z: 0.1}}, orientation: {{w: {qw}, x: 0.0, y: 0.0, z: {qz}}}'
+                ]
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception as e:
+                self.get_logger().warning(f"Ignition set_pose service call failed for {robot_id}: {e}")
+
+        return {'status': 'Fleet poses reset to home spawn positions.'}
+
 
 class DashboardHTTPRequestHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, node=None, **kwargs):
@@ -339,6 +404,13 @@ class DashboardHTTPRequestHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({'status': 'Synthetic blockage triggered on AMR 1'}).encode('utf-8'))
             return
+        elif parsed.path == '/api/reset_poses':
+            result = self.node.reset_fleet_poses()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(result).encode('utf-8'))
+            return
 
         self.send_error(404, "Endpoint not found")
 
@@ -388,7 +460,9 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()

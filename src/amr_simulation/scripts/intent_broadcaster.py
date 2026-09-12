@@ -18,8 +18,8 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from nav_msgs.msg import Odometry, Path
 from amr_interfaces.msg import FleetIntent
-from geometry_msgs.msg import TwistStamped
-from tf2_ros import Buffer, TransformListener, TransformException
+from geometry_msgs.msg import Twist, TransformStamped
+from tf2_ros import Buffer, TransformListener, TransformException, TransformBroadcaster
 import time
 
 
@@ -29,19 +29,13 @@ class IntentBroadcaster(Node):
     to peer AMRs without an intermediary broker.
     """
 
-    # Critical corridor reservation bounding box (from warehouse.sdf geometry)
-    # Must match decentralized_coordinator.py's CHOKE_* constants exactly.
-    CHOKE_X_MIN = -0.8
-    CHOKE_X_MAX = 0.8
-    CHOKE_Y_MIN = -0.60
-    CHOKE_Y_MAX = 0.60
+    CHOKE_X_MIN = -1.0
+    CHOKE_X_MAX = 1.0
+    CHOKE_Y_MIN = -0.80
+    CHOKE_Y_MAX = 0.80
 
-    # Approach zone bounding box — must match decentralized_coordinator.py's
-    # APPROACH_X_LIMIT / APPROACH_Y_LIMIT exactly, since both nodes need to
-    # agree on when a robot is "approaching" for the request-timestamp to
-    # mean the same thing on every peer.
-    APPROACH_X_LIMIT = 3.5
-    APPROACH_Y_LIMIT = 1.2
+    APPROACH_X_LIMIT = 4.0
+    APPROACH_Y_LIMIT = 2.5
 
     def __init__(self):
         super().__init__('intent_broadcaster')
@@ -62,6 +56,7 @@ class IntentBroadcaster(Node):
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.tf_broadcaster = TransformBroadcaster(self)
 
         self.current_velocity = None
         self.planned_waypoints = []
@@ -69,7 +64,7 @@ class IntentBroadcaster(Node):
 
         self._approach_entry_time = 0.0
         self.last_halt_time = 0.0
-        self.cmd_vel_coord_sub = self.create_subscription(TwistStamped, 'cmd_vel_coord', self.cmd_vel_coord_callback, 10)
+        self.cmd_vel_coord_sub = self.create_subscription(Twist, 'cmd_vel_coord', self.cmd_vel_coord_callback, 10)
 
         self.startup_timer = self.create_timer(1.0, self._wait_for_tf)
         self.broadcast_timer = None
@@ -95,6 +90,16 @@ class IntentBroadcaster(Node):
 
     def odom_callback(self, msg):
         self.current_velocity = msg.twist.twist
+        
+        t = TransformStamped()
+        t.header.stamp = msg.header.stamp
+        t.header.frame_id = msg.header.frame_id if msg.header.frame_id else f'{self.robot_id}/odom'
+        t.child_frame_id = msg.child_frame_id if msg.child_frame_id else f'{self.robot_id}/base_footprint'
+        t.transform.translation.x = msg.pose.pose.position.x
+        t.transform.translation.y = msg.pose.pose.position.y
+        t.transform.translation.z = msg.pose.pose.position.z
+        t.transform.rotation = msg.pose.pose.orientation
+        self.tf_broadcaster.sendTransform(t)
 
     def plan_callback(self, msg):
         step = max(1, len(msg.poses) // 10)
@@ -168,9 +173,12 @@ def main():
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
-    node.destroy_node()
-    rclpy.shutdown()
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':
     main()
+

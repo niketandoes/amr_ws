@@ -5,6 +5,9 @@ with sensor bridges and robot_state_publisher.
 """
 
 import os
+import signal
+import subprocess
+import time
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
@@ -14,7 +17,33 @@ from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
+def cleanup_zombie_nav2():
+    """Cleanly terminates lingering Nav2 processes from prior runs before spawning new ones."""
+    try:
+        current_pid = os.getpid()
+        # Strictly target binaries located in /opt/ros/humble/lib/nav2_*
+        res = subprocess.run(
+            ['pgrep', '-f', '/opt/ros/humble/lib/nav2_'],
+            capture_output=True, text=True
+        )
+        if res.stdout:
+            pids = [int(p.strip()) for p in res.stdout.split() if p.strip().isdigit()]
+            killed = 0
+            for pid in pids:
+                if pid != current_pid:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                        killed += 1
+                    except ProcessLookupError:
+                        pass
+            if killed > 0:
+                print(f"[warehouse_world] Cleaned up {killed} lingering Nav2 process(es) from prior session.")
+                time.sleep(0.5)
+    except Exception as e:
+        print(f"[warehouse_world] Note: Nav2 pre-cleanup skipped: {e}")
+
 def generate_launch_description():
+    cleanup_zombie_nav2()
     pkg_share = get_package_share_directory('amr_simulation')
     world_path = os.path.join(pkg_share, 'worlds', 'warehouse.sdf')
     xacro_file = os.path.join(pkg_share, 'models', 'amr.xacro')

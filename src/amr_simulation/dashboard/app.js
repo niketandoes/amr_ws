@@ -382,8 +382,13 @@
   });
 
   document.getElementById('btnRecharge')?.addEventListener('click', () => {
-    Object.keys(fleet).forEach(id => { fleet[id].trail = []; });
-    logEvent('info', 'RESET', 'Fleet breadcrumb trails cleared');
+    fetch('/api/reset_poses', { method: 'POST' })
+      .then(res => res.json())
+      .then(data => {
+        Object.keys(fleet).forEach(id => { fleet[id].trail = []; });
+        logEvent('info', 'RESET', data.status || 'Fleet poses reset to initial spawn positions');
+      })
+      .catch(err => logEvent('auction', 'ERR', 'Failed to reset poses: ' + err));
   });
 
   document.getElementById('btnClearFeed')?.addEventListener('click', () => {

@@ -8,7 +8,9 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('amr_simulation')
-    default_rviz_config_path = os.path.join(pkg_share, 'config', 'view_amr.rviz')
+    default_rviz_config_path = os.path.join(pkg_share, 'config', 'multi_amr.rviz')
+    if not os.path.exists(default_rviz_config_path):
+        default_rviz_config_path = os.path.join(pkg_share, 'config', 'view_amr.rviz')
 
     rviz_config_arg = DeclareLaunchArgument(
         name='rviz_config',
