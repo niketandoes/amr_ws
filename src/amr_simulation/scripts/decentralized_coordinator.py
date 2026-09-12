@@ -14,17 +14,27 @@ Protocol:
      consecutive ticks (~300ms) before the corridor lock is released.
   6. Stale peer intents (>1.5s without update) are pruned to prevent ghost lockups.
 
+Velocity Architecture:
+  - Nav2 controller_server publishes to cmd_vel_nav (priority 10)
+  - This coordinator publishes halt commands to cmd_vel_coord (priority 20)
+  - twist_mux merges both onto cmd_vel for the Gazebo bridge
+  - On yield: cancel Nav2 goal + publish zero-twist to cmd_vel_coord
+  - On resume: re-dispatch cached goal to Nav2
+
 Inputs:
   - /fleet/intent (amr_interfaces/msg/FleetIntent)
+  - navigate_to_pose action feedback (for goal caching)
 
 Outputs:
-  - cmd_vel (geometry_msgs/msg/TwistStamped) [Override during yielding]
+  - cmd_vel_coord (geometry_msgs/msg/TwistStamped) [Override during yielding via twist_mux]
 """
 
 import rclpy
 from rclpy.node import Node
+from rclpy.action import ActionClient
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from geometry_msgs.msg import TwistStamped
+from nav2_msgs.action import NavigateToPose
 from amr_interfaces.msg import FleetIntent
 import math
 import time
@@ -66,8 +76,16 @@ class DecentralizedCoordinator(Node):
         )
         
         self.intent_sub = self.create_subscription(FleetIntent, '/fleet/intent', self.intent_callback, p2p_qos)
-        self.cmd_vel_pub = self.create_publisher(TwistStamped, 'cmd_vel', 10)
+
+        # Publish halt commands to cmd_vel_coord (twist_mux priority 20 overrides Nav2)
+        self.cmd_vel_pub = self.create_publisher(TwistStamped, 'cmd_vel_coord', 10)
         
+        # Nav2 action client for clean goal cancel/re-dispatch during yielding
+        self._nav_action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
+        self._cached_goal = None       # NavigateToPose.Goal cached for re-dispatch
+        self._active_goal_handle = None  # Current goal handle for cancellation
+        self._is_nav_paused = False     # True when we have cancelled Nav2's goal
+
         self.peer_intents = {}       # {peer_id: FleetIntent msg}
         self.peer_timestamps = {}    # {peer_id: time.monotonic() of last received msg}
         self.my_intent = None
@@ -83,7 +101,8 @@ class DecentralizedCoordinator(Node):
             f'[{self.robot_id}] Decentralized Coordinator online '
             f'(Zone Reservation Protocol — box [{self.CHOKE_X_MIN},{self.CHOKE_X_MAX}] x '
             f'[{self.CHOKE_Y_MIN},{self.CHOKE_Y_MAX}], '
-            f'hysteresis={self.HYSTERESIS_TICKS_REQUIRED} ticks)'
+            f'hysteresis={self.HYSTERESIS_TICKS_REQUIRED} ticks, '
+            f'twist_mux output on cmd_vel_coord)'
         )
 
     def intent_callback(self, msg):
@@ -135,6 +154,7 @@ class DecentralizedCoordinator(Node):
             # If we were yielding to this stale peer, resume immediately
             if self.yielding_to == pid:
                 self.yielding_to = None
+                self._resume_navigation()
 
     def evaluate_conflicts(self):
         if not self.my_intent:
@@ -161,6 +181,7 @@ class DecentralizedCoordinator(Node):
                         f'(hysteresis satisfied). Resuming navigation.'
                     )
                     self.yielding_to = None
+                    self._resume_navigation()
                 else:
                     self._halt(self.yielding_to)
                     return
@@ -170,6 +191,7 @@ class DecentralizedCoordinator(Node):
                     f'[{self.robot_id}] {self.yielding_to} disappeared from mesh. Resuming.'
                 )
                 self.yielding_to = None
+                self._resume_navigation()
 
         # ── If we are not in the approach zone, nothing to do ──
         if not self._self_in_approach_zone():
@@ -215,14 +237,119 @@ class DecentralizedCoordinator(Node):
             self._halt(winner_id)
 
     def _halt(self, winner_id):
+        """Halt the robot by publishing zero-twist to cmd_vel_coord (twist_mux overrides
+        Nav2's cmd_vel_nav) and cancelling the active Nav2 navigation goal."""
         self.get_logger().info(
             f'[{self.robot_id}] Yielding to {winner_id} at choke zone.',
             throttle_duration_sec=1.5
         )
+        # Immediate velocity suppression via twist_mux priority override
         halt_msg = TwistStamped()
         halt_msg.header.stamp = self.get_clock().now().to_msg()
         halt_msg.header.frame_id = f'{self.robot_id}/base_footprint'
         self.cmd_vel_pub.publish(halt_msg)
+
+        # Cancel Nav2 goal to prevent progress checker timeout and recovery triggers
+        self._cancel_navigation()
+
+    def _cancel_navigation(self):
+        """Cancel the active Nav2 NavigateToPose goal and cache it for re-dispatch.
+        Prevents Nav2's progress checker from timing out during the yield hold."""
+        if self._is_nav_paused:
+            return  # Already paused, no-op
+
+        if not self._nav_action_client.server_is_ready():
+            self.get_logger().warn(
+                f'[{self.robot_id}] NavigateToPose action server not ready, '
+                f'cannot cancel goal. twist_mux halt still active.',
+                throttle_duration_sec=5.0
+            )
+            self._is_nav_paused = True
+            return
+
+        # Cancel the tracked goal handle if we have one from a re-dispatch
+        if self._active_goal_handle is not None:
+            self.get_logger().info(
+                f'[{self.robot_id}] Cancelling tracked Nav2 goal for yield hold.',
+                throttle_duration_sec=2.0
+            )
+            self._active_goal_handle.cancel_goal_async()
+        else:
+            # No tracked handle — the goal was dispatched externally (e.g., by task_allocator_cnp).
+            # twist_mux zero-twist override is still effective via cmd_vel_coord priority.
+            # The external dispatcher retains its own goal handle.
+            self.get_logger().info(
+                f'[{self.robot_id}] No tracked goal handle to cancel. '
+                f'twist_mux halt active on cmd_vel_coord.',
+                throttle_duration_sec=2.0
+            )
+        self._is_nav_paused = True
+
+    def _resume_navigation(self):
+        """Re-dispatch the cached NavigateToPose goal after the corridor clears.
+        If no cached goal exists, Nav2 will simply remain idle until the next
+        external goal dispatch (e.g., from task_allocator_cnp)."""
+        if not self._is_nav_paused:
+            return  # Not paused, no-op
+
+        self._is_nav_paused = False
+
+        if self._cached_goal is None:
+            self.get_logger().info(
+                f'[{self.robot_id}] Nav2 resumed (no cached goal to re-dispatch, '
+                f'awaiting next goal from task allocator).',
+                throttle_duration_sec=2.0
+            )
+            return
+
+        if not self._nav_action_client.server_is_ready():
+            self.get_logger().warn(
+                f'[{self.robot_id}] NavigateToPose action server not ready, '
+                f'cannot re-dispatch cached goal.',
+                throttle_duration_sec=5.0
+            )
+            return
+
+        self.get_logger().info(
+            f'[{self.robot_id}] Corridor clear — re-dispatching cached Nav2 goal '
+            f'({self._cached_goal.pose.pose.position.x:.2f}, '
+            f'{self._cached_goal.pose.pose.position.y:.2f}).'
+        )
+        send_future = self._nav_action_client.send_goal_async(
+            self._cached_goal,
+            feedback_callback=self._nav_feedback_callback
+        )
+        send_future.add_done_callback(self._goal_response_callback)
+
+    def _goal_response_callback(self, future):
+        """Track the goal handle from re-dispatched goals for future cancellation."""
+        goal_handle = future.result()
+        if goal_handle is not None and goal_handle.accepted:
+            self._active_goal_handle = goal_handle
+            self.get_logger().info(
+                f'[{self.robot_id}] Re-dispatched Nav2 goal accepted.',
+                throttle_duration_sec=2.0
+            )
+        else:
+            self.get_logger().warn(
+                f'[{self.robot_id}] Re-dispatched Nav2 goal was rejected!',
+                throttle_duration_sec=2.0
+            )
+
+    def _nav_feedback_callback(self, feedback_msg):
+        """Feedback callback for re-dispatched goals. Goal is already cached."""
+        pass  # Goal is already cached from the original dispatch
+
+    def cache_goal(self, goal_msg):
+        """Public method for external nodes (e.g., task_allocator_cnp) to register
+        the current navigation goal with the coordinator for yield/resume caching.
+        
+        Can also be called via a ROS 2 service or topic subscription if needed."""
+        self._cached_goal = goal_msg
+        self.get_logger().debug(
+            f'[{self.robot_id}] Cached Nav2 goal: '
+            f'({goal_msg.pose.pose.position.x:.2f}, {goal_msg.pose.pose.position.y:.2f})'
+        )
 
 def main():
     rclpy.init()

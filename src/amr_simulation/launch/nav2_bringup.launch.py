@@ -69,7 +69,7 @@ def launch_setup(context, *args, **kwargs):
                        '--yaw', initial_pose_yaw, '--pitch', '0.0', '--roll', '0.0',
                        '--frame-id', 'map', '--child-frame-id', f'{prefix}odom'],
             parameters=[{'use_sim_time': use_sim_time}],
-            remappings=[('/tf', '/tf'), ('/tf_static', '/tf_static')],
+            remappings=[('tf', '/tf'), ('tf_static', '/tf_static')],
             output='screen'
         ),
 
@@ -84,7 +84,7 @@ def launch_setup(context, *args, **kwargs):
             namespace=namespace,
             output='screen',
             parameters=[params_file, {'yaml_filename': map_file, 'use_sim_time': use_sim_time}],
-            remappings=[('/tf', '/tf'), ('/tf_static', '/tf_static')]
+            remappings=[('tf', '/tf'), ('tf_static', '/tf_static')]
         ),
 
         # =========================================================================
@@ -99,7 +99,8 @@ def launch_setup(context, *args, **kwargs):
             namespace=namespace,
             output='screen',
             parameters=[params_file, {'use_sim_time': use_sim_time}],
-            remappings=[('/tf', '/tf'), ('/tf_static', '/tf_static')]
+            remappings=[('tf', '/tf'), ('tf_static', '/tf_static'),
+                        ('cmd_vel', 'cmd_vel_nav')]
         ),
 
         # =========================================================================
@@ -114,7 +115,7 @@ def launch_setup(context, *args, **kwargs):
             namespace=namespace,
             output='screen',
             parameters=[params_file, {'use_sim_time': use_sim_time}],
-            remappings=[('/tf', '/tf'), ('/tf_static', '/tf_static')]
+            remappings=[('tf', '/tf'), ('tf_static', '/tf_static')]
         ),
 
         # =========================================================================
@@ -129,7 +130,7 @@ def launch_setup(context, *args, **kwargs):
             namespace=namespace,
             output='screen',
             parameters=[params_file, {'use_sim_time': use_sim_time}],
-            remappings=[('/tf', '/tf'), ('/tf_static', '/tf_static')]
+            remappings=[('tf', '/tf'), ('tf_static', '/tf_static')]
         ),
 
         # =========================================================================
@@ -147,7 +148,7 @@ def launch_setup(context, *args, **kwargs):
                 'use_sim_time': use_sim_time,
                 'default_nav_to_pose_bt_xml': os.path.join(pkg_share, 'config', 'navigate_to_pose.xml')
             }],
-            remappings=[('/tf', '/tf'), ('/tf_static', '/tf_static')]
+            remappings=[('tf', '/tf'), ('tf_static', '/tf_static')]
         ),
 
         # =========================================================================

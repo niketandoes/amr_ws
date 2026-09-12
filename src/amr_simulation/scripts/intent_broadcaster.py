@@ -88,6 +88,10 @@ class IntentBroadcaster(Node):
         self.current_velocity = msg.twist.twist
 
     def plan_callback(self, msg):
+        # Guard: during recovery behaviors the planner may clear the path
+        if not msg.poses:
+            self.planned_waypoints = []
+            return
         # Downsample the dense global plan to 3 future waypoints
         step = max(1, len(msg.poses) // 10)
         self.planned_waypoints = [p.pose for p in msg.poses[step:step*4:step]][:3]

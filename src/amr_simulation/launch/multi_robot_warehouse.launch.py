@@ -55,6 +55,7 @@ def generate_launch_description():
     world_path = os.path.join(pkg_share, 'worlds', 'warehouse.sdf')
     xacro_file = os.path.join(pkg_share, 'models', 'amr.xacro')
     nav2_params_file = os.path.join(pkg_share, 'config', 'nav2_params.yaml')
+    twist_mux_params_file = os.path.join(pkg_share, 'config', 'twist_mux_config.yaml')
 
     # Launch Gazebo
     gazebo = IncludeLaunchDescription(
@@ -99,8 +100,8 @@ def generate_launch_description():
                 'use_sim_time': True
             }],
             remappings=[
-                ('/tf', '/tf'),
-                ('/tf_static', '/tf_static')
+                ('tf', '/tf'),
+                ('tf_static', '/tf_static')
             ]
         )
 
@@ -197,7 +198,18 @@ def generate_launch_description():
             parameters=[{'use_sim_time': True}]
         )
 
-        nodes.extend([rsp, spawn, bridge, nav2, broadcaster, coordinator, battery_sim, task_alloc])
+        # twist_mux: multiplexes cmd_vel_nav (Nav2) and cmd_vel_coord (coordinator)
+        # onto cmd_vel (consumed by Gazebo bridge). Coordinator has higher priority.
+        mux = Node(
+            package='twist_mux',
+            executable='twist_mux',
+            namespace=name,
+            output='screen',
+            parameters=[twist_mux_params_file, {'use_sim_time': True}],
+            remappings=[('cmd_vel_out', 'cmd_vel')]
+        )
+
+        nodes.extend([rsp, spawn, bridge, nav2, broadcaster, coordinator, mux, battery_sim, task_alloc])
 
     # Fleet Dashboard Server & Live Telemetry Bridge
     dashboard_server = Node(

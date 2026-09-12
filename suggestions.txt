@@ -1,0 +1,18 @@
+I cannot pull code directly from the live GitHub repository. Based on the `amr_ws` architecture and the Sprint 3 Python scripts generated in the current workspace, the codebase contains several logical and operational flaws.
+
+### Active Bugs
+
+1. **Nav2 vs. Coordinator Control Fight (Stuttering):** In `decentralized_coordinator.py`, publishing a zero-velocity `Twist()` to `/cmd_vel` at 10 Hz to yield creates a race condition. Nav2's `RegulatedPurePursuitController` simultaneously publishes its forward velocity at 20 Hz. The yielding AMR will violently stutter and creep forward instead of halting cleanly.
+2. **Ghost Conflicts (Stale Data Retention):** The `self.peer_intents` dictionary stores peer messages indefinitely. If an AMR finishes its task, crashes, or drops off the DDS network, peers will permanently retain its last known position and yield to a "ghost" robot holding the reservation.
+3. **False Positive Yielding:** The coordinator triggers conflicts using a raw Euclidean distance check (`my_dist < self.choke_radius`). If an AMR is driving down an adjacent parallel aisle within 2.2 meters of the choke point's center, it will trigger a conflict despite being physically separated by a wall.
+4. **Progress Checker Timeout:** When an AMR yields and halts for cross-traffic, Nav2's internal `SimpleProgressChecker` continues ticking. If the wait exceeds the default timeout allowance (typically 10 seconds), Nav2 will flag a failure and abort the entire navigation goal before the intersection clears.
+5. **Empty Global Plan Indexing:** In `intent_broadcaster.py`, if the global planner temporarily fails or clears the path during a recovery behavior, `msg.poses` becomes empty. Blindly indexing this list to broadcast future waypoints will result in an unhandled exception and crash the node.
+
+### Suggested Improvements
+
+* **Deploy `twist_mux`:** Stop publishing directly to `/cmd_vel`. Route Nav2's output to a new topic (e.g., `/cmd_vel_nav`) and the coordinator's halt commands to `/cmd_vel_coord`. Configure `twist_mux` to give the coordinator higher priority, ensuring the zero-twist cleanly overrides Nav2.
+* **Time-to-Live (TTL) Pruning:** Add a validation step in `evaluate_conflicts` to drop any peer from the dictionary if `(current_time - intent.stamp) > 1.5` seconds, ensuring network drops automatically clear stale reservations.
+* **Spatial Bounding Boxes:** Replace the radial distance check with a strict Axis-Aligned Bounding Box (AABB) that exactly encapsulates the $1.15\text{ m}$ corridor ($x \in [-1.5, 1.5], y \in [-0.6, 0.6]$).
+* **Dynamic Nav2 Pausing:** Instead of fighting velocities, have the coordinator pause the robot by triggering a `nav2_behaviors::Wait` action, or by calling the action server's cancel routine and re-dispatching the goal once the reservation is released.
+
+Are there specific new files or recent commits in the GitHub repository that diverge from the scripts we generated in Sprint 3?

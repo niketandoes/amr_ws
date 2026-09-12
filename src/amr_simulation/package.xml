@@ -16,6 +16,8 @@
   <depend>ros_gz_sim</depend>
   <depend>ros_gz_bridge</depend>
   <depend>amr_interfaces</depend>
+  <depend>twist_mux</depend>
+  <depend>nav2_msgs</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

@@ -1,0 +1,12 @@
+twist_mux:
+  ros__parameters:
+    use_stamped: true
+    topics:
+      coordinator:
+        topic: cmd_vel_coord
+        timeout: 0.5
+        priority: 20
+      navigation:
+        topic: cmd_vel_nav
+        timeout: 0.5
+        priority: 10
