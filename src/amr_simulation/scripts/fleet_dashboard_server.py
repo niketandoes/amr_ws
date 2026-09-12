@@ -64,6 +64,7 @@ class FleetDashboardNode(Node):
         # Dynamic Telemetry State Store
         self.fleet_state = {}
         self.known_robots = set()
+        self.subscribed_robots = set()
         self.state_lock = threading.Lock()
         self.event_queue = []
         self.queue_lock = threading.Lock()
@@ -116,11 +117,13 @@ class FleetDashboardNode(Node):
                         with self.state_lock:
                             self.fleet_state[robot_id] = {'x': 0.0, 'y': 0.0, 'yaw': 0.0, 'speed': 0.0, 'battery': 100.0, 'voltage': 24.0, 'state': 'UNKNOWN', 'last_seen': time.time()}
                         
-                        # Create subscriptions for this robot
-                        self.create_subscription(Odometry, f'/{robot_id}/odom', lambda msg, r=robot_id: self.odom_callback(r, msg), 10)
-                        self.create_subscription(BatteryState, f'/{robot_id}/battery_state', lambda msg, r=robot_id: self.battery_callback(r, msg), 10)
-                        self.nav_clients[robot_id] = ActionClient(self, NavigateToPose, f'/{robot_id}/navigate_to_pose')
-                        setattr(self, f'pub_{robot_id}_goal', self.create_publisher(PoseStamped, f'/{robot_id}/goal_pose', 10))
+                        if robot_id not in self.subscribed_robots:
+                            # Create subscriptions for this robot
+                            self.create_subscription(Odometry, f'/{robot_id}/odom', lambda msg, r=robot_id: self.odom_callback(r, msg), 10)
+                            self.create_subscription(BatteryState, f'/{robot_id}/battery_state', lambda msg, r=robot_id: self.battery_callback(r, msg), 10)
+                            self.nav_clients[robot_id] = ActionClient(self, NavigateToPose, f'/{robot_id}/navigate_to_pose')
+                            setattr(self, f'pub_{robot_id}_goal', self.create_publisher(PoseStamped, f'/{robot_id}/goal_pose', 10))
+                            self.subscribed_robots.add(robot_id)
 
         # Purge disconnected robots (no odom for 5 seconds)
         current_time = time.time()
@@ -345,21 +348,15 @@ class DashboardHTTPRequestHandler(SimpleHTTPRequestHandler):
 def main(args=None):
     rclpy.init(args=args)
 
-    ws_dir = '/home/niket/amr_ws'
-    src_dashboard = os.path.join(ws_dir, 'src', 'amr_simulation', 'dashboard')
-    
-    # Try locating map directory
-    map_dir = os.path.join(ws_dir, 'src', 'amr_simulation', 'maps')
-
-    if os.path.isdir(src_dashboard):
-        static_dir = src_dashboard
-    else:
-        try:
-            pkg_share = get_package_share_directory('amr_simulation')
-            static_dir = os.path.join(pkg_share, 'dashboard')
-            map_dir = os.path.join(pkg_share, 'maps')
-        except Exception:
-            static_dir = src_dashboard
+    try:
+        pkg_share = get_package_share_directory('amr_simulation')
+        static_dir = os.path.join(pkg_share, 'dashboard')
+        map_dir = os.path.join(pkg_share, 'maps')
+    except Exception:
+        # Fallback for development without source install
+        ws_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+        static_dir = os.path.join(ws_dir, 'src', 'amr_simulation', 'dashboard')
+        map_dir = os.path.join(ws_dir, 'src', 'amr_simulation', 'maps')
 
     node = FleetDashboardNode(static_dir=static_dir, map_dir=map_dir, port=8080)
 

@@ -130,7 +130,8 @@ def launch_setup(context, *args, **kwargs):
             namespace=namespace,
             output='screen',
             parameters=[params_file, {'use_sim_time': use_sim_time}],
-            remappings=[('tf', '/tf'), ('tf_static', '/tf_static')]
+            remappings=[('tf', '/tf'), ('tf_static', '/tf_static'),
+                        ('cmd_vel', 'cmd_vel_nav')]
         ),
 
         # =========================================================================

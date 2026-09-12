@@ -45,13 +45,13 @@ import time
 
 class DecentralizedCoordinator(Node):
 
-    CHOKE_X_MIN = -1.5
-    CHOKE_X_MAX = 1.5
-    CHOKE_Y_MIN = -1.2
-    CHOKE_Y_MAX = 1.2
+    CHOKE_X_MIN = -0.8
+    CHOKE_X_MAX = 0.8
+    CHOKE_Y_MIN = -0.60
+    CHOKE_Y_MAX = 0.60
 
     APPROACH_X_LIMIT = 3.5
-    APPROACH_Y_LIMIT = 1.5
+    APPROACH_Y_LIMIT = 1.2
 
     HYSTERESIS_TICKS_REQUIRED = 5      # ~500ms at 10Hz
     INTENT_EXPIRY_SEC = 1.5
@@ -88,6 +88,7 @@ class DecentralizedCoordinator(Node):
         self.my_intent = None
         self.yielding_to = None
         self.peer_clear_ticks = {}
+        self.peer_has_entered_zone = {}
         self._warned_incomplete_peers = False
 
         self.create_timer(0.1, self.evaluate_conflicts)  # 10 Hz
@@ -142,6 +143,7 @@ class DecentralizedCoordinator(Node):
             self.peer_intents.pop(pid, None)
             self.peer_timestamps.pop(pid, None)
             self.peer_clear_ticks.pop(pid, None)
+            self.peer_has_entered_zone.pop(pid, None)
             if self.yielding_to == pid:
                 self.yielding_to = None
 
@@ -154,6 +156,7 @@ class DecentralizedCoordinator(Node):
         for peer_id, intent in self.peer_intents.items():
             if intent.is_in_choke_zone:
                 self.peer_clear_ticks[peer_id] = 0
+                self.peer_has_entered_zone[peer_id] = True
             else:
                 self.peer_clear_ticks[peer_id] = self.peer_clear_ticks.get(peer_id, 0) + 1
 
@@ -205,7 +208,7 @@ class DecentralizedCoordinator(Node):
         # ── RULE 1: Occupancy gate ──
         for peer_id, intent in self.peer_intents.items():
             peer_in_zone = intent.is_in_choke_zone
-            peer_clearing = not peer_in_zone and not self._peer_confirmed_clear(peer_id)
+            peer_clearing = not peer_in_zone and self.peer_has_entered_zone.get(peer_id, False) and not self._peer_confirmed_clear(peer_id)
             if peer_in_zone or peer_clearing:
                 if not i_am_in_zone:
                     self.yielding_to = peer_id
@@ -213,6 +216,9 @@ class DecentralizedCoordinator(Node):
                     return
 
         # ── RULE 2: Fair tie-break — earliest requester wins ──
+        if i_am_in_zone:
+            return  # Do not halt if we are already occupying the corridor
+        
         approaching_peers = []
         for peer_id, intent in self.peer_intents.items():
             px, py = intent.current_pose.position.x, intent.current_pose.position.y

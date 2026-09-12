@@ -7,9 +7,10 @@ with sensor bridges and robot_state_publisher.
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription
+from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command
+from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -17,6 +18,12 @@ def generate_launch_description():
     pkg_share = get_package_share_directory('amr_simulation')
     world_path = os.path.join(pkg_share, 'worlds', 'warehouse.sdf')
     xacro_file = os.path.join(pkg_share, 'models', 'amr.xacro')
+    twist_mux_params_file = os.path.join(pkg_share, 'config', 'twist_mux_config.yaml')
+
+    rviz_arg = DeclareLaunchArgument(
+        'rviz', default_value='false',
+        description='Launch RViz2 for visualization'
+    )
 
     # Process xacro
     robot_description_config = ParameterValue(Command(['xacro ', xacro_file]), value_type=str)
@@ -74,10 +81,39 @@ def generate_launch_description():
         )
     )
 
+    # RViz2 Bringup
+    rviz_bringup = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(pkg_share, 'launch', 'rviz.launch.py')
+        ),
+        condition=IfCondition(LaunchConfiguration('rviz'))
+    )
+
+    # Twist Mux
+    mux = Node(
+        package='twist_mux',
+        executable='twist_mux',
+        output='screen',
+        parameters=[twist_mux_params_file, {'use_sim_time': True}],
+        remappings=[('cmd_vel_out', 'cmd_vel')]
+    )
+
+    # Benchmark Logger
+    benchmark_logger = Node(
+        package='amr_simulation',
+        executable='benchmark_logger.py',
+        name='benchmark_logger',
+        output='screen'
+    )
+
     return LaunchDescription([
+        rviz_arg,
         gazebo,
         node_robot_state_publisher,
         spawn_entity,
         bridge,
-        nav2_bringup
+        nav2_bringup,
+        rviz_bringup,
+        mux,
+        benchmark_logger
     ])

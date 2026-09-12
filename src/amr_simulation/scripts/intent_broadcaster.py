@@ -18,6 +18,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from nav_msgs.msg import Odometry, Path
 from amr_interfaces.msg import FleetIntent
+from geometry_msgs.msg import TwistStamped
 from tf2_ros import Buffer, TransformListener, TransformException
 import time
 
@@ -30,17 +31,17 @@ class IntentBroadcaster(Node):
 
     # Critical corridor reservation bounding box (from warehouse.sdf geometry)
     # Must match decentralized_coordinator.py's CHOKE_* constants exactly.
-    CHOKE_X_MIN = -1.5
-    CHOKE_X_MAX = 1.5
-    CHOKE_Y_MIN = -1.2
-    CHOKE_Y_MAX = 1.2
+    CHOKE_X_MIN = -0.8
+    CHOKE_X_MAX = 0.8
+    CHOKE_Y_MIN = -0.60
+    CHOKE_Y_MAX = 0.60
 
     # Approach zone bounding box — must match decentralized_coordinator.py's
     # APPROACH_X_LIMIT / APPROACH_Y_LIMIT exactly, since both nodes need to
     # agree on when a robot is "approaching" for the request-timestamp to
     # mean the same thing on every peer.
     APPROACH_X_LIMIT = 3.5
-    APPROACH_Y_LIMIT = 1.5
+    APPROACH_Y_LIMIT = 1.2
 
     def __init__(self):
         super().__init__('intent_broadcaster')
@@ -66,9 +67,9 @@ class IntentBroadcaster(Node):
         self.planned_waypoints = []
         self.tf_ready = False
 
-        # Monotonic timestamp of when we first entered the approach zone.
-        # 0.0 means "not currently approaching."
         self._approach_entry_time = 0.0
+        self.last_halt_time = 0.0
+        self.cmd_vel_coord_sub = self.create_subscription(TwistStamped, 'cmd_vel_coord', self.cmd_vel_coord_callback, 10)
 
         self.startup_timer = self.create_timer(1.0, self._wait_for_tf)
         self.broadcast_timer = None
@@ -88,6 +89,9 @@ class IntentBroadcaster(Node):
                 f'[{self.robot_id}] Waiting for TF (map -> {self.robot_id}/base_footprint)...',
                 throttle_duration_sec=5.0
             )
+
+    def cmd_vel_coord_callback(self, msg):
+        self.last_halt_time = self.get_clock().now().nanoseconds / 1e9
 
     def odom_callback(self, msg):
         self.current_velocity = msg.twist.twist
@@ -119,10 +123,12 @@ class IntentBroadcaster(Node):
         in_choke = self._is_in_choke_zone(x, y)
         in_approach = self._is_in_approach_zone(x, y)
 
+        now = self.get_clock().now().nanoseconds / 1e9
+
         # Track first-entry timestamp into the approach zone for fair
         # request-order tie-breaking (reset once we leave the zone).
         if in_approach and self._approach_entry_time == 0.0:
-            self._approach_entry_time = time.monotonic()
+            self._approach_entry_time = now
         elif not in_approach:
             self._approach_entry_time = 0.0
 
@@ -138,8 +144,11 @@ class IntentBroadcaster(Node):
             msg.current_velocity = self.current_velocity
         msg.planned_waypoints = self.planned_waypoints
 
-        # Actually reflect real state now (was previously hardcoded to 0).
-        if in_choke:
+        is_yielding = (now - self.last_halt_time) < 0.5
+
+        if is_yielding:
+            msg.current_state = 3   # YIELDING
+        elif in_choke:
             msg.current_state = 2   # IN_CHOKE
         elif in_approach:
             msg.current_state = 1   # APPROACHING_CHOKE

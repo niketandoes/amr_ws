@@ -2,14 +2,9 @@
 <!--
   AMR Description (Xacro)
   Differential-drive mobile robot with parameterized prefix for multi-robot namespacing.
-  Features:
-    - Base footprint and chassis link (0.6m x 0.5m x 0.2m)
-    - Left and right differential drive wheels (0.1m radius)
-    - Front and rear passive caster wheels
-    - 2D LiDAR ray sensor plugin (360 deg FOV, 10m range, 10 Hz)
-    - Gazebo differential drive plugin publishing odometry and wheel transforms
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="amr">
+    <!-- IMPORTANT: Assumes robot_name is passed WITH a trailing slash from the launch file (e.g., 'amr1/') -->
     <xacro:arg name="robot_name" default=""/>
     
     <link name="$(arg robot_name)base_footprint"/>
@@ -35,6 +30,8 @@
             </geometry>
         </collision>
         <inertial>
+            <!-- FIX: Shifted Center of Mass forward by 0.1m to prevent backward tipping -->
+            <origin xyz="0.1 0 0" rpy="0 0 0"/>
             <mass value="10.0"/>
             <inertia ixx="0.24" ixy="0" ixz="0" iyy="0.33" iyz="0" izz="0.5"/>
         </inertial>
@@ -72,7 +69,7 @@
     <xacro:wheel side="left" y_reflect="1"/>
     <xacro:wheel side="right" y_reflect="-1"/>
 
-    <!-- Caster wheel to keep it stable -->
+    <!-- Front Caster wheel -->
     <link name="$(arg robot_name)caster_wheel">
         <visual>
             <geometry>
@@ -129,6 +126,8 @@
             <update_rate>10</update_rate>
             <topic>/$(arg robot_name)scan</topic>
             <gz_frame_id>$(arg robot_name)lidar_link</gz_frame_id>
+            <!-- FIX: Added explicit ROS 2 frame ID -->
+            <frame_id>$(arg robot_name)lidar_link</frame_id>
             <ray>
                 <scan>
                     <horizontal>
@@ -153,8 +152,9 @@
     </gazebo>
 
     <gazebo reference="$(arg robot_name)caster_wheel">
-        <mu1 value="0.001"/>
-        <mu2 value="0.001"/>
+        <!-- FIX: Corrected Gazebo SDF friction parameter syntax -->
+        <mu1>0.001</mu1>
+        <mu2>0.001</mu2>
     </gazebo>
 
     <gazebo>

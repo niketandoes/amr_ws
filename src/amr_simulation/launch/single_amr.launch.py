@@ -98,9 +98,9 @@ def launch_setup(context, *args, **kwargs):
     with open(nav2_params_file, 'r') as f:
         base_params = yaml.safe_load(f)
 
-    robot_params = {name: {}}
+    robot_params = {}
     for key, value in base_params.items():
-        robot_params[name][key] = update_params_dict(value, name)
+        robot_params[f'{name}/{key}'] = update_params_dict(value, name)
 
     tmp_params = f'/tmp/nav2_params_{name}.yaml'
     with open(tmp_params, 'w') as f:

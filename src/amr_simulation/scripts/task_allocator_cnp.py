@@ -34,6 +34,7 @@ class TaskAllocatorCNP(Node):
         self.stalled_start_time = None
         self.is_blocked = False
         self.low_battery_triggered = False
+        self.auction_retries = 0
 
         # Low battery threshold: below this %, reject bids and return to dock
         self.LOW_BATTERY_THRESHOLD = 15.0
@@ -143,6 +144,17 @@ class TaskAllocatorCNP(Node):
         """Monitors velocity when actively navigating to detect stuck/blocked condition."""
         if not self.is_navigating or self.is_blocked or self.active_goal_pose is None:
             return
+
+        # Suppress blockage detection if we are yielding at the choke zone
+        if hasattr(self, 'current_speed') and self.current_speed < 0.05:
+            # Note: We'd ideally check intent state here, but for simplicity we rely on
+            # the fact that if we are actively yielding, we shouldn't trigger CNP.
+            # A robust way is to subscribe to cmd_vel_coord, but let's just use the position heuristic:
+            if self.tf_position:
+                x, y = self.tf_position
+                if abs(x) <= 3.5 and abs(y) <= 1.2:
+                    self.stalled_start_time = None
+                    return
 
         now = time.time()
         # If moving below 0.05 m/s
@@ -272,10 +284,19 @@ class TaskAllocatorCNP(Node):
             self.get_logger().info(
                 f"[{self.robot_id}] Auction {task_id} CLOSED. Winner: {winner_id} with bid {winner.bid_cost:.2f}"
             )
+            self.auction_retries = 0
         else:
-            self.get_logger().warning(f"[{self.robot_id}] Auction {task_id} received 0 bids. Retrying in 2.0s...")
-            self.active_auction = None
-            return
+            if getattr(self, 'auction_retries', 0) < 2:
+                self.auction_retries = getattr(self, 'auction_retries', 0) + 1
+                self.get_logger().warning(f"[{self.robot_id}] Auction {task_id} received 0 bids. Retrying in 2.0s... (Attempt {self.auction_retries})")
+                self.auction_timer = self.create_timer(2.0, self.initiate_task_auction)
+                return
+            else:
+                self.get_logger().error(f"[{self.robot_id}] Auction {task_id} failed after retries. Rerouting to standby.")
+                self.auction_retries = 0
+                self.active_auction = None
+                self.reroute_to_standby()
+                return
 
         self.active_auction = None
 
@@ -341,10 +362,7 @@ class TaskAllocatorCNP(Node):
             target = PoseStamped()
             target.header.frame_id = 'map'
             target.header.stamp = self.get_clock().now().to_msg()
-            # Standard mission delivery waypoint
-            target.pose.position.x = 3.5
-            target.pose.position.y = -1.5
-            target.pose.orientation.w = 1.0
+            target.pose = msg.target_pose
 
             self.dispatch_nav2_goal(target)
 
@@ -356,6 +374,12 @@ class TaskAllocatorCNP(Node):
 
         goal_msg = NavigateToPose.Goal()
         goal_msg.pose = pose_stamped
+        
+        self.active_goal_pose = pose_stamped.pose
+        self.is_navigating = True
+        self.is_blocked = False
+        self.stalled_start_time = None
+        
         self.nav_client.send_goal_async(goal_msg)
 
 

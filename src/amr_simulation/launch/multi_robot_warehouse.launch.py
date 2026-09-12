@@ -5,6 +5,7 @@ from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch.conditions import IfCondition
+from launch_ros.actions import Node
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('amr_simulation')
@@ -74,6 +75,14 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('launch_dashboard'))
     )
 
+    # Benchmark Logger
+    benchmark_logger = Node(
+        package='amr_simulation',
+        executable='benchmark_logger.py',
+        name='benchmark_logger',
+        output='screen'
+    )
+
     return LaunchDescription([
         declare_launch_gazebo,
         declare_launch_amr1,
@@ -84,5 +93,6 @@ def generate_launch_description():
         amr1,
         amr2,
         amr3,
-        dashboard
+        dashboard,
+        benchmark_logger
     ])

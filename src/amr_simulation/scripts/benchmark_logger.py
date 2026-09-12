@@ -39,7 +39,10 @@ class BenchmarkLogger(Node):
             'deadlock_start': None,
             'total_deadlock_time': 0.0,
             'last_odom_time': None,
-            'min_dist': float('inf')
+            'min_dist': float('inf'),
+            'last_goal_id': None,
+            'last_status': None,
+            'has_exported': False
         } for r in self.robots}
         
         # TF2 listener for accurate global positioning
@@ -63,18 +66,25 @@ class BenchmarkLogger(Node):
 
     def process_position(self, robot_id, new_x, new_y):
         s = self.state[robot_id]
+        now = self.get_clock().now()
         
         if s['x'] is not None and s['active_goal']:
             dx = new_x - s['x']
             dy = new_y - s['y']
             dist = math.hypot(dx, dy)
-            s['distance_traveled'] += dist
-            # Estimate velocity for deadlock detection
-            s['v'] = dist / 0.1 
+            if dist > 0.005:
+                s['distance_traveled'] += dist
+            
+            if s['last_odom_time'] is not None:
+                dt = (now - s['last_odom_time']).nanoseconds / 1e9
+                if dt > 0:
+                    s['v'] = dist / dt
+            
+            self.get_logger().debug(f"[{robot_id}] Moving: v={s['v']:.3f}m/s, dist={s['distance_traveled']:.2f}m")
             
         s['x'] = new_x
         s['y'] = new_y
-        s['last_odom_time'] = self.get_clock().now()
+        s['last_odom_time'] = now
         
         # Calculate distance to other robots — only when both have active goals
         # and valid (non-null) odometry to avoid false 0.00m readings
@@ -94,6 +104,15 @@ class BenchmarkLogger(Node):
             return
             
         latest_status = msg.status_list[-1].status
+        goal_id = bytes(msg.status_list[-1].goal_info.goal_id.uuid).hex()
+        
+        if s['last_goal_id'] == goal_id and s['last_status'] == latest_status:
+            return
+            
+        s['last_goal_id'] = goal_id
+        s['last_status'] = latest_status
+        
+        self.get_logger().info(f"[{robot_id}] Goal {goal_id[:8]} transitioned to status: {latest_status}")
         
         if latest_status in [GoalStatus.STATUS_EXECUTING, GoalStatus.STATUS_ACCEPTED]:
             if not s['active_goal']:
@@ -103,12 +122,14 @@ class BenchmarkLogger(Node):
                 s['total_deadlock_time'] = 0.0
                 s['deadlock_start'] = None
                 s['min_dist'] = float('inf')
+                s['has_exported'] = False
                 self.get_logger().info(f"[{robot_id}] Mission started. Benchmark logging active.")
         elif latest_status in [GoalStatus.STATUS_SUCCEEDED, GoalStatus.STATUS_CANCELED, GoalStatus.STATUS_ABORTED]:
-            if s['active_goal']:
+            if s['active_goal'] and not s['has_exported']:
                 s['active_goal'] = False
+                s['has_exported'] = True
                 tct = (self.get_clock().now() - s['start_time']).nanoseconds / 1e9
-                self.get_logger().info(f"[{robot_id}] Mission Finished. Status: {latest_status}, TCT: {tct:.2f}s, Deadlock: {s['total_deadlock_time']:.2f}s")
+                self.get_logger().info(f"[{robot_id}] Mission Finished. Status: {latest_status}, TCT: {tct:.2f}s, Distance: {s['distance_traveled']:.2f}m, Deadlock: {s['total_deadlock_time']:.2f}s")
                 self.export_results(robot_id, latest_status, tct)
 
     def check_deadlock(self):
@@ -135,7 +156,7 @@ class BenchmarkLogger(Node):
         s = self.state[robot_id]
         min_d_str = f"{s['min_dist']:.2f}" if s['min_dist'] != float('inf') else "N/A"
         
-        file_path = 'benchmark_results.csv'
+        file_path = os.path.expanduser('~/amr_ws/benchmark_results.csv')
         write_header = not os.path.exists(file_path)
         
         with open(file_path, 'a', newline='') as f:
